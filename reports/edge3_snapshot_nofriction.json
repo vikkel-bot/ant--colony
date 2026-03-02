@@ -1,0 +1,13 @@
+{
+  "ts_utc": "2026-03-02T13:44:44.083670+00:00",
+  "market": "BTC-EUR",
+  "interval": "4h",
+  "status": "OK",
+  "closed_trades": 451,
+  "winrate": 0.5277161862527716,
+  "profit_factor": 0.8847203230428675,
+  "ending_equity": 987.6760211225185,
+  "max_dd": null,
+  "position_fraction": 0.05,
+  "initial_equity": 1000.0
+}

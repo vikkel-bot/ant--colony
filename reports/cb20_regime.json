@@ -1,0 +1,10 @@
+{
+  "ts_utc": "2026-03-02T14:38:13.591755+00:00",
+  "market": "BTC-EUR",
+  "interval": "4h",
+  "trend_regime": "BEAR",
+  "vol_regime": "MID",
+  "gate": "ALLOW",
+  "size_mult": 1.0,
+  "source_cache": "BTC-EUR_4h_candles.json"
+}

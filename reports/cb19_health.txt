@@ -1,0 +1,1 @@
+﻿2026-03-02T14:38:14.782Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0

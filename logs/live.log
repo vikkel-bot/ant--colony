@@ -1,0 +1,292 @@
+2026-03-02T13:59:14.431Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60
+2026-03-02T13:59:14.437Z TICK_START
+2026-03-02T13:59:14.452Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T13:59:14.654200+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T13:59:14.702Z STEP_OK CB20 rc=0
+2026-03-02T13:59:14.703Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T13:59:14.852626+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T13:59:14.891Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T13:59:14.892Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T13:59:15.093934+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T13:59:15.670Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T13:59:15.671Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T13:59:15.798438+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T13:59:15.839Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T13:59:15.839Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:00:15.848Z TICK_START
+2026-03-02T14:00:15.850Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:00:16.042638+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:00:16.089Z STEP_OK CB20 rc=0
+2026-03-02T14:00:16.090Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:00:16.247302+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:00:16.289Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:00:16.290Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:00:16.464302+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T14:00:17.060Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:00:17.061Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:00:17.191068+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:00:17.233Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:00:17.234Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:01:50.928Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60 max_snap_age_s=180
+2026-03-02T14:01:50.933Z TICK_START
+2026-03-02T14:01:50.948Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:01:51.133254+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:01:51.181Z STEP_OK CB20 rc=0
+2026-03-02T14:01:51.182Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:01:51.352310+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:01:51.391Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:01:51.399Z SNAP_OK name=CB20 age_s=0 path=reports\cb20_regime.json
+2026-03-02T14:01:51.400Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:01:51.537969+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T14:01:52.108Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:01:52.108Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:01:52.233637+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:01:52.273Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:01:52.274Z SNAP_OK name=EDGE3 age_s=0 path=reports\edge3_snapshot.json
+2026-03-02T14:01:52.275Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb20_snap=0 rc_cb21=0 rc_edge3_bridge=0 rc_edge3_snap=0
+2026-03-02T14:04:08.298Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60 max_snap_age_s=180
+2026-03-02T14:04:08.304Z TICK_START
+2026-03-02T14:04:08.319Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:04:08.501631+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:04:08.549Z STEP_OK CB20 rc=0
+2026-03-02T14:04:08.550Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:04:08.696249+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:04:08.736Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:04:08.745Z SNAP_OK name=CB20 age_s=0 path=reports\cb20_regime.json
+2026-03-02T14:04:08.746Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:04:08.888042+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T14:04:09.451Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:04:09.452Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:04:09.622124+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:04:09.662Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:04:09.663Z SNAP_OK name=EDGE3 age_s=0 path=reports\edge3_snapshot.json
+2026-03-02T14:04:09.664Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb20_snap=0 rc_cb21=0 rc_edge3_bridge=0 rc_edge3_snap=0
+2026-03-02T14:05:09.667Z TICK_START
+2026-03-02T14:05:09.669Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:05:09.850856+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:05:09.897Z STEP_OK CB20 rc=0
+2026-03-02T14:05:09.898Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:05:10.023119+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:05:10.063Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:05:10.064Z SNAP_OK name=CB20 age_s=0 path=reports\cb20_regime.json
+2026-03-02T14:05:10.065Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:05:10.245620+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T14:05:10.814Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:05:10.815Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:05:10.945164+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:05:10.984Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:05:10.985Z SNAP_OK name=EDGE3 age_s=0 path=reports\edge3_snapshot.json
+2026-03-02T14:05:10.986Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb20_snap=0 rc_cb21=0 rc_edge3_bridge=0 rc_edge3_snap=0
+2026-03-02T14:07:49.955Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60 max_snap_age_s=180
+2026-03-02T14:07:49.961Z TICK_START
+2026-03-02T14:07:49.976Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:07:50.149593+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:07:50.198Z STEP_OK CB20 rc=0
+2026-03-02T14:07:50.199Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:07:50.363877+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:07:50.404Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:07:50.405Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:07:50.576908+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID size_mult=1.00 base_pf=0.50 -> position_fraction=0.5000
+2026-03-02T14:07:51.136Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:07:51.137Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:07:51.283954+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:07:51.324Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:07:51.408Z HEALTH 2026-03-02T14:07:51.402Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:07:51.408Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:16:10.975Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60 max_snap_age_s=180
+2026-03-02T14:16:10.981Z TICK_START
+2026-03-02T14:16:10.996Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:16:11.166924+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:16:11.215Z STEP_OK CB20 rc=0
+2026-03-02T14:16:11.216Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:16:11.349526+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:16:11.388Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:16:11.388Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:16:11.548137+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:16:12.121Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:16:12.122Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:16:12.248427+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:16:12.288Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:16:12.342Z HEALTH 2026-03-02T14:16:12.336Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:16:12.343Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:17:12.352Z TICK_START
+2026-03-02T14:17:12.354Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:17:12.590693+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:17:12.638Z STEP_OK CB20 rc=0
+2026-03-02T14:17:12.639Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:17:12.850314+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:17:12.895Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:17:12.896Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:17:13.062022+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:17:13.705Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:17:13.707Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:17:13.852798+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:17:13.898Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:17:13.905Z HEALTH 2026-03-02T14:17:13.901Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:17:13.906Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:18:13.911Z TICK_START
+2026-03-02T14:18:13.913Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:18:14.118513+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:18:14.172Z STEP_OK CB20 rc=0
+2026-03-02T14:18:14.173Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:18:14.361359+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:18:14.413Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:18:14.415Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:18:14.587748+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:18:15.258Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:18:15.259Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:18:15.425594+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:18:15.470Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:18:15.475Z HEALTH 2026-03-02T14:18:15.473Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:18:15.476Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:19:15.482Z TICK_START
+2026-03-02T14:19:15.483Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:19:15.645425+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:19:15.691Z STEP_OK CB20 rc=0
+2026-03-02T14:19:15.692Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:19:15.812012+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:19:15.852Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:19:15.853Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:19:15.983778+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:19:16.537Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:19:16.538Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:19:16.676398+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:19:16.716Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:19:16.721Z HEALTH 2026-03-02T14:19:16.719Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:19:16.722Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:20:16.728Z TICK_START
+2026-03-02T14:20:16.730Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:20:16.903893+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:20:16.949Z STEP_OK CB20 rc=0
+2026-03-02T14:20:16.950Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:20:17.095537+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:20:17.135Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:20:17.136Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:20:17.286746+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:20:17.858Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:20:17.859Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:20:17.994861+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:20:18.035Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:20:18.042Z HEALTH 2026-03-02T14:20:18.040Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:20:18.043Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:21:18.050Z TICK_START
+2026-03-02T14:21:18.053Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:21:18.212754+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:21:18.254Z STEP_OK CB20 rc=0
+2026-03-02T14:21:18.255Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:21:18.392068+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:21:18.431Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:21:18.432Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:21:18.615276+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:21:19.160Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:21:19.161Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:21:19.287639+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:21:19.327Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:21:19.331Z HEALTH 2026-03-02T14:21:19.329Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:21:19.332Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:22:19.338Z TICK_START
+2026-03-02T14:22:19.340Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:22:19.508062+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:22:19.551Z STEP_OK CB20 rc=0
+2026-03-02T14:22:19.552Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:22:19.679069+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:22:19.718Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:22:19.719Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:22:19.853653+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:22:20.396Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:22:20.397Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:22:20.529305+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:22:20.569Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:22:20.573Z HEALTH 2026-03-02T14:22:20.571Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:22:20.574Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:23:20.586Z TICK_START
+2026-03-02T14:23:20.588Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:23:20.764647+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:23:20.806Z STEP_OK CB20 rc=0
+2026-03-02T14:23:20.807Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:23:20.943869+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:23:20.981Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:23:20.982Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:23:21.153959+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:23:21.692Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:23:21.693Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:23:21.823525+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:23:21.862Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:23:21.874Z HEALTH 2026-03-02T14:23:21.872Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:23:21.875Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:24:21.889Z TICK_START
+2026-03-02T14:24:21.892Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:24:22.059195+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:24:22.102Z STEP_OK CB20 rc=0
+2026-03-02T14:24:22.103Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:24:22.242867+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:24:22.282Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:24:22.283Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:24:22.464819+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:24:23.004Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:24:23.005Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:24:23.124654+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:24:23.162Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:24:23.167Z HEALTH 2026-03-02T14:24:23.165Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:24:23.168Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:25:23.180Z TICK_START
+2026-03-02T14:25:23.182Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:25:23.353562+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:25:23.394Z STEP_OK CB20 rc=0
+2026-03-02T14:25:23.395Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:25:23.534029+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:25:23.572Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:25:23.573Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:25:23.699733+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:25:24.241Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:25:24.242Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:25:24.417446+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:25:24.456Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:25:24.462Z HEALTH 2026-03-02T14:25:24.459Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:25:24.462Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:36:10.178Z CB19_LIVE_START root=C:\Users\vikke\OneDrive\bitvavo-bot_clean sleep_s=60 max_snap_age_s=180
+2026-03-02T14:36:10.185Z TICK_START
+2026-03-02T14:36:10.200Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:36:10.374165+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:36:10.425Z STEP_OK CB20 rc=0
+2026-03-02T14:36:10.426Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:36:10.558902+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:36:10.602Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:36:10.603Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:36:10.745787+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:36:11.399Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:36:11.400Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:36:11.553300+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:36:11.598Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:36:11.658Z HEALTH 2026-03-02T14:36:11.653Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:36:11.659Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:37:11.667Z TICK_START
+2026-03-02T14:37:11.668Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:37:11.875286+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:37:11.933Z STEP_OK CB20 rc=0
+2026-03-02T14:37:11.934Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:37:12.119848+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:37:12.173Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:37:12.174Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:37:12.376320+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:37:13.139Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:37:13.140Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:37:13.326498+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:37:13.380Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:37:13.386Z HEALTH 2026-03-02T14:37:13.383Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:37:13.387Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
+2026-03-02T14:38:13.395Z TICK_START
+2026-03-02T14:38:13.397Z STEP_START CB20 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb20_regime.py" 
+    2026-03-02T14:38:13.592815+00:00 CB20 OK market=BTC-EUR interval=4h trend=BEAR vol=MID gate=ALLOW size=1.0 cache=BTC-EUR_4h_candles.json
+2026-03-02T14:38:13.640Z STEP_OK CB20 rc=0
+2026-03-02T14:38:13.641Z STEP_START CB20_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_cb20_bridge.py" 
+    2026-03-02T14:38:13.790330+00:00 CB20 BTC-EUR 4h trend=BEAR vol=MID gate=ALLOW size=1.0 age_s=0
+2026-03-02T14:38:13.833Z STEP_OK CB20_BRIDGE rc=0
+2026-03-02T14:38:13.834Z STEP_START CB21_EDGE3 cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb21_edge3_gate.py" 
+    2026-03-02T14:38:13.991869+00:00 CB21 EDGE3_GATE gate=ALLOW trend=BEAR vol=MID cb20_mult=1.00 health_mult=1.00 base_pf=0.50 -> position_fraction=0.5000 reason=EDGE3_OK
+2026-03-02T14:38:14.608Z STEP_OK CB21_EDGE3 rc=0
+2026-03-02T14:38:14.610Z STEP_START EDGE3_BRIDGE cmd=python "C:\Users\vikke\OneDrive\bitvavo-bot_clean\cb19_edge3_bridge.py" 
+    2026-03-02T14:38:14.735707+00:00 EDGE3 gate=ALLOW size=1.0 pf=0.5 trend=BEAR vol=MID meta_age_s=0 snap=OK
+2026-03-02T14:38:14.779Z STEP_OK EDGE3_BRIDGE rc=0
+2026-03-02T14:38:14.784Z HEALTH 2026-03-02T14:38:14.782Z gate=ALLOW trend=BEAR vol=MID edge3_status=OK pf=1.19547996739453 equity=1060.05442855983 snap_age_s=0
+2026-03-02T14:38:14.785Z TICK_END rc_cb20=0 rc_cb20_bridge=0 rc_cb21=0 rc_edge3_bridge=0
