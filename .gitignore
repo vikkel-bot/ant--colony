@@ -65,3 +65,8 @@ secrets.*
 !*.cmd
 !requirements*.txt
 !README*
+
+# ===== Local backups / patch remnants =====
+*.bak
+*.bak_*
+backup/
