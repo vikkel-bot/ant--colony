@@ -1,0 +1,238 @@
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+INTEL_PATH = OUT_DIR / "colony_signal_mix.json"
+DASH_PATH = OUT_DIR / "combined_colony_status.json"
+ALLOC_PATH = OUT_DIR / "alloc_targets_combined.json"
+
+OUT_JSON = OUT_DIR / "queen_strategy_router_lite.json"
+OUT_TSV = OUT_DIR / "queen_strategy_router_lite.tsv"
+
+
+def utc_now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_json(path: Path):
+    if not path.exists():
+        return None, f"missing:{path.name}"
+
+    encodings = ["utf-8-sig", "utf-8"]
+    last_error = None
+
+    for enc in encodings:
+        try:
+            text = path.read_text(encoding=enc)
+            return json.loads(text), None
+        except Exception as e:
+            last_error = e
+
+    return None, f"read_error:{path.name}:{last_error}"
+
+
+def market_map(doc):
+    if isinstance(doc, dict):
+        markets = doc.get("markets", {})
+        if isinstance(markets, dict):
+            return markets
+    return {}
+
+
+def safe_float(v, default=0.0):
+    try:
+        if v is None or str(v).strip() == "":
+            return default
+        return float(str(v).replace(",", "."))
+    except Exception:
+        return default
+
+
+def write_tsv(ts_utc: str, rows: list[dict]):
+    headers = [
+        "ts_utc",
+        "market",
+        "active_strategy",
+        "route_bias",
+        "route_confidence",
+        "route_reason",
+        "trend",
+        "edge3_gate",
+        "edge4_state",
+        "edge4_bias",
+        "colony_bias",
+        "colony_confidence",
+        "final_size_mult",
+    ]
+
+    lines = ["\t".join(headers)]
+
+    for row in rows:
+        values = [str(row.get(h, "")) for h in headers]
+        lines.append("\t".join(values))
+
+    OUT_TSV.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def choose_route(trend, edge3_gate, edge4_state, edge4_bias, colony_bias, colony_confidence, final_size_mult):
+    trend = str(trend or "").upper()
+    edge3_gate = str(edge3_gate or "").upper()
+    edge4_state = str(edge4_state or "").lower()
+    edge4_bias = str(edge4_bias or "").upper()
+    colony_bias = str(colony_bias or "").upper()
+    conf = safe_float(colony_confidence, 0.0)
+    final_mult = safe_float(final_size_mult, 0.0)
+
+    edge4_active = edge4_state == "ok" and edge4_bias in ("LONG", "SHORT")
+
+    if final_mult <= 0.0:
+        return {
+            "active_strategy": "NONE",
+            "route_bias": "NEUTRAL",
+            "route_confidence": conf,
+            "route_reason": "FINAL_BLOCKED",
+        }
+
+    if colony_bias == "NEUTRAL":
+        return {
+            "active_strategy": "NONE",
+            "route_bias": "NEUTRAL",
+            "route_confidence": conf,
+            "route_reason": "COLONY_NEUTRAL",
+        }
+
+    if conf < 0.50:
+        return {
+            "active_strategy": "NONE",
+            "route_bias": colony_bias,
+            "route_confidence": conf,
+            "route_reason": "LOW_CONFIDENCE",
+        }
+
+    if trend == "SIDEWAYS" and edge4_active:
+        return {
+            "active_strategy": "EDGE4",
+            "route_bias": colony_bias,
+            "route_confidence": conf,
+            "route_reason": "SIDEWAYS_EDGE4_PRIORITY",
+        }
+
+    if edge3_gate == "ALLOW" and colony_bias in ("LONG", "SHORT"):
+        return {
+            "active_strategy": "EDGE3",
+            "route_bias": colony_bias,
+            "route_confidence": conf,
+            "route_reason": "EDGE3_PRIORITY",
+        }
+
+    if edge4_active:
+        return {
+            "active_strategy": "EDGE4",
+            "route_bias": colony_bias,
+            "route_confidence": conf,
+            "route_reason": "EDGE4_FALLBACK",
+        }
+
+    return {
+        "active_strategy": "NONE",
+        "route_bias": colony_bias,
+        "route_confidence": conf,
+        "route_reason": "NO_VALID_ROUTE",
+    }
+
+
+def main():
+    intel_doc, intel_err = load_json(INTEL_PATH)
+    dash_doc, dash_err = load_json(DASH_PATH)
+    alloc_doc, alloc_err = load_json(ALLOC_PATH)
+
+    intel_markets = market_map(intel_doc)
+    dash_markets = market_map(dash_doc)
+    alloc_markets = market_map(alloc_doc)
+
+    all_markets = sorted(
+        set(intel_markets.keys()) |
+        set(dash_markets.keys()) |
+        set(alloc_markets.keys())
+    )
+
+    ts_utc = utc_now()
+    out_rows = []
+    out_markets = {}
+
+    for market in all_markets:
+        intel_row = intel_markets.get(market, {}) or {}
+        dash_row = dash_markets.get(market, {}) or {}
+        alloc_row = alloc_markets.get(market, {}) or {}
+
+        edge3_row = dash_row.get("edge3", {}) or {}
+        edge4_row = dash_row.get("edge4", {}) or {}
+
+        trend = edge3_row.get("cb20_trend", "")
+        edge3_gate = edge3_row.get("gate", "")
+        edge4_state = edge4_row.get("state", "")
+        edge4_bias = intel_row.get("edge4_bias", "")
+        colony_bias = intel_row.get("colony_bias", "")
+        colony_confidence = safe_float(intel_row.get("colony_confidence", 0.0), 0.0)
+        final_size_mult = safe_float(
+            alloc_row.get("target_size_mult", alloc_row.get("size_mult", 0.0)),
+            0.0
+        )
+
+        route = choose_route(
+            trend=trend,
+            edge3_gate=edge3_gate,
+            edge4_state=edge4_state,
+            edge4_bias=edge4_bias,
+            colony_bias=colony_bias,
+            colony_confidence=colony_confidence,
+            final_size_mult=final_size_mult,
+        )
+
+        row = {
+            "ts_utc": ts_utc,
+            "market": market,
+            "active_strategy": route["active_strategy"],
+            "route_bias": route["route_bias"],
+            "route_confidence": route["route_confidence"],
+            "route_reason": route["route_reason"],
+            "trend": trend,
+            "edge3_gate": edge3_gate,
+            "edge4_state": edge4_state,
+            "edge4_bias": edge4_bias,
+            "colony_bias": colony_bias,
+            "colony_confidence": colony_confidence,
+            "final_size_mult": final_size_mult,
+        }
+
+        out_rows.append(row)
+        out_markets[market] = row
+
+    out_doc = {
+        "ts_utc": ts_utc,
+        "component": "queen_strategy_router_lite",
+        "sources": {
+            "intel_source": str(INTEL_PATH),
+            "dashboard_source": str(DASH_PATH),
+            "alloc_source": str(ALLOC_PATH),
+            "intel_error": intel_err,
+            "dashboard_error": dash_err,
+            "alloc_error": alloc_err,
+        },
+        "market_count": len(out_rows),
+        "markets": out_markets,
+    }
+
+    OUT_JSON.write_text(json.dumps(out_doc, indent=2), encoding="utf-8")
+    write_tsv(ts_utc, out_rows)
+
+    print(f"WROTE {OUT_JSON}")
+    print(f"WROTE {OUT_TSV}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

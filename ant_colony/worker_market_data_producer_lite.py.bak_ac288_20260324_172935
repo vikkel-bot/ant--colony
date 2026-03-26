@@ -1,0 +1,140 @@
+﻿from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from datetime import datetime, UTC
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ant_colony.broker_adapters import BitvavoAdapter
+
+ANT_OUT = Path(r"C:\Trading\ANT_OUT")
+
+MARKETS = [
+    "ADA-EUR",
+    "BNB-EUR",
+    "BTC-EUR",
+    "ETH-EUR",
+    "SOL-EUR",
+    "XRP-EUR",
+]
+
+INTERVAL = "4h"
+LIMIT = 2
+
+
+def utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def save_json_atomic(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def market_prefix(market: str) -> str:
+    return str(market).split("-")[0].lower()
+
+
+def main():
+    ts = utc_now_iso()
+
+    adapter = BitvavoAdapter(
+        ops_log_path=str(ANT_OUT / "bitvavo_adapter_ops.jsonl")
+    )
+
+    summary_rows = []
+    ok_count = 0
+    fail_count = 0
+
+    for market in MARKETS:
+        prefix = market_prefix(market)
+        out_path = ANT_OUT / f"{prefix}_worker_market_data_live.json"
+
+        result = adapter.get_market_data(market, INTERVAL, LIMIT)
+
+        row = {
+            "market": market,
+            "interval": INTERVAL,
+            "limit": LIMIT,
+            "producer_ts_utc": ts,
+            "ok": bool(result.get("ok", False)),
+            "latency_ms": result.get("latency_ms"),
+            "attempts": result.get("attempts"),
+        }
+
+        if bool(result.get("ok", False)):
+            data = result.get("data") or {}
+            rows = data.get("rows") or []
+            last_row = rows[-1] if rows else None
+
+            out = {
+                "component": "worker_market_data_producer_lite",
+                "market": market,
+                "interval": INTERVAL,
+                "producer_ts_utc": ts,
+                "adapter_ok": True,
+                "rows_count": len(rows),
+                "last_row": last_row,
+                "rows": rows,
+                "latency_ms": result.get("latency_ms"),
+                "attempts": result.get("attempts"),
+            }
+
+            save_json_atomic(out_path, out)
+
+            row["state"] = "OK" if last_row else "EMPTY_ROWS"
+            row["rows_count"] = len(rows)
+            row["last_ts_utc"] = (last_row or {}).get("ts_utc") if isinstance(last_row, dict) else None
+            row["last_close"] = (last_row or {}).get("close") if isinstance(last_row, dict) else None
+
+            if last_row:
+                ok_count += 1
+            else:
+                fail_count += 1
+        else:
+            out = {
+                "component": "worker_market_data_producer_lite",
+                "market": market,
+                "interval": INTERVAL,
+                "producer_ts_utc": ts,
+                "adapter_ok": False,
+                "error_type": result.get("error_type"),
+                "code": result.get("code"),
+                "message": result.get("message"),
+                "latency_ms": result.get("latency_ms"),
+                "attempts": result.get("attempts"),
+                "raw_error": result.get("raw_error"),
+            }
+
+            save_json_atomic(out_path, out)
+
+            row["state"] = "ERROR"
+            row["error_type"] = result.get("error_type")
+            row["code"] = result.get("code")
+            row["message"] = result.get("message")
+            fail_count += 1
+
+        summary_rows.append(row)
+
+    summary = {
+        "component": "worker_market_data_producer_lite",
+        "ts_utc": ts,
+        "market_count": len(MARKETS),
+        "ok_count": ok_count,
+        "fail_count": fail_count,
+        "markets": summary_rows,
+    }
+
+    save_json_atomic(ANT_OUT / "worker_market_data_producer_summary.json", summary)
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()

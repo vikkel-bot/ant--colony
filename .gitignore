@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data_cache/
+reports/*.jsonl
+reports/*.csv
+reports/*.log
+sim_state.json
+trades.jsonl
+news_signals.jsonl

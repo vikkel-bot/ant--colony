@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ROOT = Path(r"C:\Users\vikke\OneDrive\bitvavo-bot_clean")
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+PYEXE = ROOT / ".venv" / "Scripts" / "python.exe"
+CHECK_SCRIPT = ROOT / "ant_colony" / "colony_watchdog_check_lite.py"
+START_SCRIPT = ROOT / "ant_colony" / "colony_start_loop.cmd"
+
+CHECK_JSON = OUT_DIR / "colony_watchdog_check_lite.json"
+OUT_JSON = OUT_DIR / "colony_watchdog_start_if_needed.json"
+LOCK_FILE = OUT_DIR / "colony_cycle_loop_lite.lock"
+
+MAX_AGE_SECONDS = 120
+START_COOLDOWN_SECONDS = 120
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso_z(dt: datetime) -> str:
+    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def detect_cooldown(prev: dict) -> tuple[bool, int]:
+    ts = str(prev.get("ts_utc", "") or "")
+    action = str(prev.get("action", "") or "")
+    if not ts or action != "START_LOOP":
+        return False, -1
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        age = int((now_utc() - dt).total_seconds())
+    except Exception:
+        return False, -1
+    return (0 <= age < START_COOLDOWN_SECONDS), age
+
+
+def pid_is_running(pid_text: str) -> bool:
+    pid_text = str(pid_text or "").strip()
+    if not pid_text or not pid_text.isdigit():
+        return False
+    try:
+        proc = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid_text}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        return pid_text in out and "No tasks are running" not in out
+    except Exception:
+        return False
+
+
+def read_lock() -> tuple[bool, str]:
+    if not LOCK_FILE.exists():
+        return False, ""
+    try:
+        return True, LOCK_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return True, ""
+
+
+def clear_stale_lock_if_needed() -> tuple[bool, str, str]:
+    lock_exists, lock_pid = read_lock()
+    if not lock_exists:
+        return False, "", ""
+    if pid_is_running(lock_pid):
+        return True, lock_pid, ""
+    try:
+        LOCK_FILE.unlink(missing_ok=True)
+        return False, lock_pid, "STALE_LOCK_REMOVED"
+    except Exception:
+        return True, lock_pid, "STALE_LOCK_REMOVE_FAILED"
+
+
+def run_watchdog_check() -> int:
+    proc = subprocess.run(
+        [str(PYEXE), str(CHECK_SCRIPT), str(MAX_AGE_SECONDS)],
+        cwd=str(ROOT),
+    )
+    return int(proc.returncode)
+
+
+def check_says_engine_ok(check: dict) -> bool:
+    ok = bool(check.get("ok", False))
+    engine_running = bool(check.get("engine_running", False))
+    watchdog_state = str(check.get("watchdog_state", "") or "").upper()
+    runtime_state = str(check.get("runtime_state", "") or "").upper()
+    return ok and engine_running and watchdog_state == "FRESH" and runtime_state == "RUNNING_OK"
+
+
+def start_loop() -> None:
+    subprocess.Popen(
+        ["cmd.exe", "/c", "start", "COLONY_LOOP", "cmd", "/k", str(START_SCRIPT)],
+        cwd=str(ROOT),
+    )
+
+
+def main() -> int:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not PYEXE.exists():
+        print(f"ERROR: python not found: {PYEXE}")
+        return 1
+    if not CHECK_SCRIPT.exists():
+        print(f"ERROR: watchdog script not found: {CHECK_SCRIPT}")
+        return 1
+    if not START_SCRIPT.exists():
+        print(f"ERROR: start script not found: {START_SCRIPT}")
+        return 1
+
+    print("RUNNING_COLONY_WATCHDOG_START_IF_NEEDED")
+    print(f"PYEXE={PYEXE}")
+    print(f"CHECK_SCRIPT={CHECK_SCRIPT}")
+    print(f"START_SCRIPT={START_SCRIPT}")
+    print(f"MAX_AGE_SECONDS={MAX_AGE_SECONDS}")
+    print(f"START_COOLDOWN_SECONDS={START_COOLDOWN_SECONDS}")
+
+    prev = read_json(OUT_JSON)
+    cooldown_active, cooldown_age_seconds = detect_cooldown(prev)
+
+    action = "NO_START"
+    result = "UNSET"
+    decision_reason = "INIT"
+    check_rc = 999
+
+    lock_present = False
+    lock_pid = ""
+    lock_reason = ""
+
+    lock_present, lock_pid, lock_cleanup_reason = clear_stale_lock_if_needed()
+    if lock_cleanup_reason:
+        print(f"LOCK_CLEANUP={lock_cleanup_reason}")
+        lock_reason = lock_cleanup_reason
+
+    if cooldown_active:
+        print("WATCHDOG_RESULT=NO_START_COOLDOWN")
+        result = "COOLDOWN_ACTIVE"
+        decision_reason = "NO_START_COOLDOWN"
+    elif lock_present:
+        print("WATCHDOG_RESULT=NO_START_ACTIVE_LOCK")
+        result = "LOCK_PRESENT"
+        if not lock_reason:
+            lock_reason = "LOCK_FILE_PRESENT"
+        decision_reason = "NO_START_ACTIVE_LOCK"
+    else:
+        check_rc = run_watchdog_check()
+        check = read_json(CHECK_JSON)
+
+        if check_says_engine_ok(check):
+            print("WATCHDOG_RESULT=NO_START_FRESH_HEARTBEAT")
+            result = "ENGINE_ALREADY_RUNNING_OK"
+            decision_reason = "NO_START_FRESH_HEARTBEAT"
+        else:
+            lock_present, lock_pid, lock_cleanup_reason_2 = clear_stale_lock_if_needed()
+            if lock_cleanup_reason_2:
+                print(f"LOCK_CLEANUP={lock_cleanup_reason_2}")
+                lock_reason = lock_cleanup_reason_2
+
+            if lock_present:
+                print("WATCHDOG_RESULT=NO_START_ACTIVE_LOCK_AFTER_CHECK")
+                result = "LOCK_PRESENT_AFTER_CHECK"
+                if not lock_reason:
+                    lock_reason = "LOCK_FILE_PRESENT_AFTER_CHECK"
+                decision_reason = "NO_START_ACTIVE_LOCK_AFTER_CHECK"
+            else:
+                print("WATCHDOG_RESULT=START_LOOP")
+                print("STARTING_COLONY_LOOP_IN_NEW_WINDOW")
+                start_loop()
+                action = "START_LOOP"
+                result = "ENGINE_NOT_RUNNING_OR_STALE"
+                decision_reason = "START_LOOP"
+
+    check = read_json(CHECK_JSON)
+
+    out = {
+        "component": "colony_watchdog_start_if_needed",
+        "ts_utc": iso_z(now_utc()),
+        "check_rc": int(check_rc),
+        "max_age_seconds": int(MAX_AGE_SECONDS),
+        "start_cooldown_seconds": int(START_COOLDOWN_SECONDS),
+        "cooldown_active": bool(cooldown_active),
+        "cooldown_age_seconds": int(cooldown_age_seconds),
+        "lock_present": bool(lock_present),
+        "lock_pid": str(lock_pid or ""),
+        "lock_reason": str(lock_reason or ""),
+        "action": str(action),
+        "result": str(result),
+        "decision_reason": str(decision_reason),
+        "watchdog_state": str(check.get("watchdog_state", "") or ""),
+        "runtime_state": str(check.get("runtime_state", "") or ""),
+        "last_known_runtime_state": str(check.get("last_known_runtime_state", "") or ""),
+        "heartbeat_pid": str(check.get("heartbeat_pid", "") or ""),
+        "heartbeat_cycle_no": int(check.get("heartbeat_cycle_no", 0) or 0),
+        "heartbeat_age_seconds": int(check.get("heartbeat_age_seconds", -1) or -1),
+        "engine_running": bool(check.get("engine_running", False)),
+        "check_ok": bool(check.get("ok", False)),
+        "recovery_triggered": bool(check.get("recovery_triggered", False)),
+    }
+    write_json(OUT_JSON, out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

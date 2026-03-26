@@ -1,0 +1,42 @@
+{
+  "version": "worker_registry_v2",
+  "ts_note": "step60a_strategy_contract_layer",
+  "strategies": {
+    "NONE": {
+      "family": "NONE",
+      "class": "INACTIVE",
+      "priority": 0,
+      "enabled": true,
+      "supports_long": false,
+      "supports_short": false,
+      "entry_mode": "DISABLED",
+      "exit_mode": "NONE",
+      "cooldown_policy": "NONE",
+      "capital_bucket": "INACTIVE"
+    },
+    "EDGE3": {
+      "family": "WORKER",
+      "class": "MEAN_REVERSION",
+      "priority": 200,
+      "enabled": true,
+      "supports_long": true,
+      "supports_short": false,
+      "entry_mode": "SIGNAL_DRIVEN",
+      "exit_mode": "SIGNAL_OR_RISK",
+      "cooldown_policy": "STANDARD",
+      "capital_bucket": "CASHFLOW"
+    },
+    "EDGE4": {
+      "family": "HUNTER",
+      "class": "BREAKOUT",
+      "priority": 300,
+      "enabled": true,
+      "supports_long": true,
+      "supports_short": false,
+      "entry_mode": "BREAKOUT_TRIGGER",
+      "exit_mode": "SIGNAL_OR_RISK",
+      "cooldown_policy": "STANDARD",
+      "capital_bucket": "MOMENTUM"
+    }
+  }
+}

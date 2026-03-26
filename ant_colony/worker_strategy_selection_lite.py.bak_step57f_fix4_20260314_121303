@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+ROUTER_PATH = OUT_DIR / "queen_strategy_router.json"
+COMBINED_PATH = OUT_DIR / "alloc_targets_combined.json"
+OUTPUT_JSON = OUT_DIR / "worker_strategy_selection.json"
+OUTPUT_TSV = OUT_DIR / "worker_strategy_selection.tsv"
+
+
+def now_utc_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def first_present(d: dict, keys: list[str], default=None):
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return default
+
+
+def normalize_markets_block(doc: dict) -> dict:
+    markets = doc.get("markets", {}) or {}
+
+    if isinstance(markets, dict):
+        return {str(k): v for k, v in markets.items() if isinstance(v, dict)}
+
+    out = {}
+    if isinstance(markets, list):
+        for row in markets:
+            if not isinstance(row, dict):
+                continue
+            market = str(row.get("market", "") or "")
+            if not market:
+                continue
+            out[market] = row
+    return out
+
+def select_for_market(market: str, router_row: dict, combined_row: dict) -> dict:
+    active_strategy = str(first_present(router_row, ["active_strategy"], "NONE") or "NONE").upper()
+    route_bias = str(first_present(router_row, ["route_bias", "final_bias", "colony_bias"], "NEUTRAL") or "NEUTRAL").upper()
+    route_conf = to_float(first_present(router_row, ["route_confidence", "final_confidence", "colony_confidence"], 0.0), 0.0)
+    route_reason = str(first_present(router_row, ["route_reason", "final_reason"], "NO_ROUTE_REASON") or "NO_ROUTE_REASON")
+
+    combined_gate = norm_gate(first_present(combined_row, ["gate"], "ALLOW"), "ALLOW")
+    selected_size_mult = to_float(
+        first_present(
+            combined_row,
+            ["target_size_mult", "final_size_mult", "size_mult", "alloc_size_mult"],
+            0.0,
+        ),
+        0.0,
+    )
+    combined_reason = str(first_present(combined_row, ["reason"], "NO_COMBINED_REASON") or "NO_COMBINED_REASON")
+
+    if combined_gate == "BLOCK":
+        return {
+            "selected_strategy": "NONE",
+            "strategy_family": "NONE",
+            "strategy_class": "INACTIVE",
+            "strategy_priority": 0,
+            "selected_bias": "NEUTRAL",
+            "selected_size_mult": 0.0,
+            "selection_reason": f"BLOCKED_BY_COMBINED_GATE; {combined_reason}",
+        }
+
+    if active_strategy == "NONE":
+        return {
+            "selected_strategy": "NONE",
+            "strategy_family": "NONE",
+            "strategy_class": "INACTIVE",
+            "strategy_priority": 0,
+            "selected_bias": "NEUTRAL",
+            "selected_size_mult": 0.0,
+            "selection_reason": f"NO_ACTIVE_STRATEGY_FROM_ROUTER; {route_reason}",
+        }
+
+    if selected_size_mult <= 0:
+        return {
+            "selected_strategy": "NONE",
+            "strategy_family": "NONE",
+            "strategy_class": "INACTIVE",
+            "strategy_priority": 0,
+            "selected_bias": "NEUTRAL",
+            "selected_size_mult": 0.0,
+            "selection_reason": f"ZERO_SIZE_FROM_COMBINED_LAYER; {combined_reason}",
+        }
+
+    return {
+        "selected_strategy": active_strategy,
+        "strategy_family": str(router_row.get("strategy_family", "NONE") or "NONE"),
+        "strategy_class": str(router_row.get("strategy_class", "INACTIVE") or "INACTIVE"),
+        "strategy_priority": int(router_row.get("strategy_priority", 0) or 0),
+        "selected_bias": route_bias,
+        "selected_size_mult": round(selected_size_mult, 4),
+        "selection_reason": f"{route_reason}; conf={route_conf:.2f}",
+    }
+
+
+def main() -> int:
+    router = load_json(ROUTER_PATH)
+    combined = load_json(COMBINED_PATH)
+
+    router_markets = normalize_markets_block(router)
+    combined_markets = normalize_markets_block(combined)
+
+    all_markets = sorted(set(router_markets.keys()) | set(combined_markets.keys()))
+
+    result = {
+        "version": "worker_strategy_selection_lite_v2",
+        "ts_utc": now_utc_iso(),
+        "source_files": {
+            "queen_strategy_router": str(ROUTER_PATH),
+            "alloc_targets_combined": str(COMBINED_PATH),
+        },
+        "markets": {},
+    }
+
+    tsv_lines = [
+        "market\tselected_strategy\tselected_bias\tselected_size_mult\tselection_reason"
+    ]
+
+    for market in all_markets:
+        router_row = router_markets.get(market, {})
+        combined_row = combined_markets.get(market, {})
+
+        row = select_for_market(market, router_row, combined_row)
+        result["markets"][market] = row
+
+        tsv_lines.append(
+            f'{market}\t{row["selected_strategy"]}\t{row["selected_bias"]}\t{row["selected_size_mult"]}\t{row["selection_reason"]}'
+        )
+
+    OUTPUT_JSON.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    OUTPUT_TSV.write_text("\n".join(tsv_lines) + "\n", encoding="utf-8")
+
+    print(json.dumps({
+        "ok": True,
+        "output_json": str(OUTPUT_JSON),
+        "output_tsv": str(OUTPUT_TSV),
+        "markets": len(all_markets),
+    }, indent=2))
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

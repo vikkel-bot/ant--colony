@@ -1,0 +1,24 @@
+{
+  "version": "worker_registry_v1",
+  "ts_note": "manual_seed_step58a",
+  "strategies": {
+    "NONE": {
+      "family": "NONE",
+      "class": "INACTIVE",
+      "priority": 0,
+      "enabled": true
+    },
+    "EDGE3": {
+      "family": "WORKER",
+      "class": "MEAN_REVERSION",
+      "priority": 200,
+      "enabled": true
+    },
+    "EDGE4": {
+      "family": "HUNTER",
+      "class": "BREAKOUT",
+      "priority": 300,
+      "enabled": true
+    }
+  }
+}

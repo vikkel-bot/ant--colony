@@ -1,0 +1,30 @@
+﻿$ErrorActionPreference = "Stop"
+
+$ROOT = "C:\Users\vikke\OneDrive\bitvavo-bot_clean"
+$PY = Join-Path $ROOT ".venv\Scripts\python.exe"
+$SCRIPT = Join-Path $ROOT "ant_colony\run_colony_execution_cycle_lite.py"
+
+Write-Host "RUNNING_COLONY_EXECUTION_CYCLE"
+Write-Host "ROOT=$ROOT"
+Write-Host "PY=$PY"
+Write-Host "SCRIPT=$SCRIPT"
+Write-Host ""
+
+if (!(Test-Path $PY)) {
+    Write-Error "Python executable not found: $PY"
+}
+
+if (!(Test-Path $SCRIPT)) {
+    Write-Error "Runner script not found: $SCRIPT"
+}
+
+Push-Location $ROOT
+try {
+    & $PY $SCRIPT
+    $exitCode = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+
+exit $exitCode

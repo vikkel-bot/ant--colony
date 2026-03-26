@@ -1,0 +1,26 @@
+{
+  "ts_utc": "2026-03-14T14:41:37.734605+00:00",
+  "market": "BTC-EUR",
+  "interval": "4h",
+  "status": "OK",
+  "closed_trades": 94,
+  "winrate": 0.8085106382978723,
+  "profit_factor": 1.4514353474836192,
+  "ending_equity": 1061.3175252261506,
+  "max_dd": null,
+  "position_fraction": 0.5,
+  "initial_equity": 1000.0,
+  "settings": {
+    "taker_fee": 0.0025,
+    "maker_fee": 0.0015,
+    "slippage_bps": 3.0,
+    "entry_mode": "limit_maker",
+    "reclaim_limit_offset_bps": -10.0,
+    "fill_prob": 0.7,
+    "stop_extra_slip_bps": 1.0,
+    "vol_filter": "atr_percentile",
+    "atr_period": 14,
+    "atr_regime_window": 200,
+    "atr_regime_percentile": 0.5
+  }
+}

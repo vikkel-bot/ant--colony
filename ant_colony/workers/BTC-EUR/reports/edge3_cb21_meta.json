@@ -1,0 +1,18 @@
+{
+  "ts_utc": "2026-03-14T14:40:14.070674+00:00",
+  "cb20_market": "BTC-EUR",
+  "cb20_interval": "4h",
+  "cb20_trend": "SIDEWAYS",
+  "cb20_vol": "LOW",
+  "cb20_gate": "ALLOW",
+  "cb20_size_mult": 1.0,
+  "edge3_health_gate": "ALLOW",
+  "edge3_health_size_mult": 1.0,
+  "edge3_health_reason": "EDGE3_OK",
+  "edge3_combined_gate": "ALLOW",
+  "edge3_combined_size_mult": 1.0,
+  "edge3_base_pf": 0.5,
+  "edge3_effective_pf": 0.5,
+  "edge3_start_iso": "2024-03-14T14:40:14Z",
+  "edge3_end_iso": "2026-03-14T14:40:14Z"
+}

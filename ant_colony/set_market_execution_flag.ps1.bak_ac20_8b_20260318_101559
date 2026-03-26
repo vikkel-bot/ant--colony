@@ -1,0 +1,35 @@
+﻿param(
+    [Parameter(Mandatory=$true)]
+    [string]$Market,
+
+    [Parameter(Mandatory=$true)]
+    [bool]$Enabled
+)
+
+$path = "C:\Trading\ANT_OUT\execution_control.json"
+
+if (-not (Test-Path $path)) {
+    throw "Missing file: $path"
+}
+
+$data = Get-Content $path -Raw | ConvertFrom-Json
+$tsUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+if (-not $data.markets) {
+    throw "execution_control.json has no markets object"
+}
+
+$marketProp = $data.markets.PSObject.Properties | Where-Object { $_.Name -eq $Market }
+
+if (-not $marketProp) {
+    throw "Unknown market: $Market"
+}
+
+$marketProp.Value.execution_enabled = $Enabled
+$data.ts_utc = $tsUtc
+$data.source_component = "execution_control_manual"
+
+$data | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8
+
+Write-Host "UPDATED $path :: $Market -> $Enabled"
+Get-Content $path

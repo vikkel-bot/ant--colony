@@ -1,0 +1,175 @@
+﻿import json
+from pathlib import Path
+from datetime import datetime, timezone
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+EXECUTION_LOG_PATH = OUT_DIR / "paper_execution_log.jsonl"
+POSITIONS_PATH = OUT_DIR / "paper_positions.json"
+PORTFOLIO_STATE_PATH = OUT_DIR / "paper_portfolio_state.json"
+PORTFOLIO_SUMMARY_PATH = OUT_DIR / "paper_portfolio_summary.json"
+OUT_FEEDBACK_PATH = OUT_DIR / "paper_trade_feedback.json"
+OUT_FEEDBACK_TSV_PATH = OUT_DIR / "paper_trade_feedback.tsv"
+
+
+def utc_now_ts():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return default
+
+
+def load_jsonl(path: Path):
+    rows = []
+    if not path.exists():
+        return rows
+    try:
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return rows
+
+
+def to_float(v, default=0.0):
+    try:
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def write_json(path: Path, obj):
+    path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+
+
+def write_tsv(path: Path, headers, rows):
+    lines = ["`t".join(headers)]
+    for row in rows:
+        lines.append("`t".join(str(row.get(h, "")) for h in headers))
+    path.write_text("`n".join(lines), encoding="utf-8")
+
+
+def main():
+    ts = utc_now_ts()
+
+    execution_log = load_jsonl(EXECUTION_LOG_PATH)
+    positions = load_json(POSITIONS_PATH, {})
+    portfolio_state = load_json(PORTFOLIO_STATE_PATH, {})
+    portfolio_summary = load_json(PORTFOLIO_SUMMARY_PATH, {})
+
+    open_positions = []
+    closed_positions = []
+    markets = sorted(set(list((positions or {}).keys())))
+
+    enter_count = 0
+    exit_count = 0
+    realized_pnl_total = 0.0
+
+    for row in execution_log:
+        action = str(row.get("action", "")).upper()
+        if action == "ENTER_LONG":
+            enter_count += 1
+        elif action == "EXIT_LONG":
+            exit_count += 1
+            realized_pnl_total += to_float(row.get("realized_pnl", 0.0), 0.0)
+
+    feedback_rows = []
+
+    for market in markets:
+        pos = (positions or {}).get(market) or {}
+        state = str(pos.get("position", "FLAT") or "FLAT").upper()
+
+        if state == "LONG":
+            entry_price = to_float(pos.get("entry_price", 0.0), 0.0)
+            size = to_float(pos.get("size", 0.0), 0.0)
+            mark_price = to_float(((portfolio_state.get("last_price_map", {}) or {}).get(market)), entry_price)
+            unrealized_pnl = to_float((((portfolio_state.get("positions", {}) or {}).get(market, {}) or {}).get("unrealized_pnl")), 0.0)
+
+            row = {
+                "market": market,
+                "state": "OPEN",
+                "entry_price": entry_price,
+                "mark_price": mark_price,
+                "size": size,
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": 0.0,
+                "feedback_score": round(unrealized_pnl, 2),
+                "feedback_label": "POSITIVE" if unrealized_pnl > 0 else ("NEGATIVE" if unrealized_pnl < 0 else "FLAT"),
+                "decision_id": pos.get("decision_id"),
+                "execution_id": pos.get("execution_id"),
+            }
+            open_positions.append(row)
+            feedback_rows.append(row)
+
+        elif state == "FLAT":
+            realized = to_float(pos.get("realized_pnl", 0.0), 0.0)
+            row = {
+                "market": market,
+                "state": "CLOSED",
+                "entry_price": to_float(pos.get("entry_price", 0.0), 0.0),
+                "mark_price": to_float(pos.get("exit_price", 0.0), 0.0),
+                "size": to_float(pos.get("size", 0.0), 0.0),
+                "unrealized_pnl": 0.0,
+                "realized_pnl": round(realized, 2),
+                "feedback_score": round(realized, 2),
+                "feedback_label": "POSITIVE" if realized > 0 else ("NEGATIVE" if realized < 0 else "FLAT"),
+                "decision_id": pos.get("decision_id"),
+                "execution_id": pos.get("execution_id"),
+            }
+            closed_positions.append(row)
+            feedback_rows.append(row)
+
+    unrealized_total = round(to_float(portfolio_summary.get("unrealized_pnl", 0.0), 0.0), 2)
+
+    out = {
+        "component": "paper_trade_feedback_lite",
+        "ts_utc": ts,
+        "markets_total": len(feedback_rows),
+        "enter_count": enter_count,
+        "exit_count": exit_count,
+        "open_positions": len(open_positions),
+        "closed_positions": len(closed_positions),
+        "realized_pnl_total": round(realized_pnl_total, 2),
+        "unrealized_pnl_total": unrealized_total,
+        "portfolio_equity": to_float(portfolio_summary.get("equity", 0.0), 0.0),
+        "portfolio_cash": to_float(portfolio_summary.get("cash", 0.0), 0.0),
+        "valuation_state": portfolio_summary.get("valuation_state"),
+        "rows": feedback_rows
+    }
+
+    write_json(OUT_FEEDBACK_PATH, out)
+    write_tsv(
+        OUT_FEEDBACK_TSV_PATH,
+        [
+            "market",
+            "state",
+            "entry_price",
+            "mark_price",
+            "size",
+            "unrealized_pnl",
+            "realized_pnl",
+            "feedback_score",
+            "feedback_label",
+            "decision_id",
+            "execution_id",
+        ],
+        feedback_rows
+    )
+
+    print(json.dumps(out, indent=2))
+
+
+if __name__ == "__main__":
+    main()

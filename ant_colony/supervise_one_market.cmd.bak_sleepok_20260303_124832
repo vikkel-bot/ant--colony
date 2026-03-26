@@ -1,0 +1,69 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+set "MARKET=%~1"
+if "%MARKET%"=="" (
+  echo ERROR: missing MARKET. Example: supervise_one_market.cmd BTC-EUR
+  exit /b 2
+)
+
+set "SCRIPTDIR=%~dp0"
+for %%I in ("%SCRIPTDIR%..") do set "REPOROOT=%%~fI"
+
+set "OUTDIR=C:\Trading\ANT_OUT"
+if not exist "%OUTDIR%" mkdir "%OUTDIR%" >nul 2>&1
+set "LOG=%OUTDIR%\worker_%MARKET%.log"
+
+set "BASE_S=2"
+set "MAX_S=60"
+set "SLEEP_S=%BASE_S%"
+
+set "W=%REPOROOT%\ant_colony\workers\%MARKET%"
+
+REM Preferred entry: worker_cycle.cmd
+set "ENTRY_CMD="
+if exist "%W%\worker_cycle.cmd" set "ENTRY_CMD=worker_cycle.cmd"
+
+REM Fallback python entry candidates
+set "ENTRY_PY="
+for %%F in (run_edge3_fast.py worker.py run_worker.py worker_main.py main.py run.py bot.py) do (
+  if exist "%W%\%%F" if "!ENTRY_PY!"=="" set "ENTRY_PY=%%F"
+)
+
+if "%ENTRY_CMD%"=="" if "%ENTRY_PY%"=="" (
+  echo ==== ERROR %DATE% %TIME% market=%MARKET% no entry found in %W% ====>> "%LOG%"
+  exit /b 3
+)
+
+:restart
+if not "%ENTRY_CMD%"=="" (
+  echo ==== START %DATE% %TIME% market=%MARKET% entry=%ENTRY_CMD% ====>> "%LOG%"
+) else (
+  echo ==== START %DATE% %TIME% market=%MARKET% entry=%ENTRY_PY% ====>> "%LOG%"
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$o=@{ts_utc=(Get-Date).ToUniversalTime().ToString('o'); market='%MARKET%'; state='starting'}; $p=Join-Path '%OUTDIR%' ('hb_%MARKET%.json'); ($o | ConvertTo-Json -Compress) | Set-Content -Path $p -Encoding Ascii"
+
+pushd "%W%"
+if not "%ENTRY_CMD%"=="" (
+  cmd /c "%ENTRY_CMD%" >> "%LOG%" 2>&1
+  set "EC=%ERRORLEVEL%"
+) else (
+  python "%ENTRY_PY%" >> "%LOG%" 2>&1
+  set "EC=%ERRORLEVEL%"
+)
+popd
+
+echo ==== EXIT %DATE% %TIME% market=%MARKET% ec=%EC% ====>> "%LOG%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$o=@{ts_utc=(Get-Date).ToUniversalTime().ToString('o'); market='%MARKET%'; state='exited'; exit_code=%EC%}; $p=Join-Path '%OUTDIR%' ('hb_%MARKET%.json'); ($o | ConvertTo-Json -Compress) | Set-Content -Path $p -Encoding Ascii"
+
+if %SLEEP_S% LSS %MAX_S% (
+  set /a SLEEP_S=SLEEP_S*2
+  if !SLEEP_S! GTR %MAX_S% set "SLEEP_S=%MAX_S%"
+)
+
+timeout /t %SLEEP_S% /nobreak >nul
+goto restart

@@ -1,0 +1,74 @@
+import json
+from pathlib import Path
+
+OUT=Path(r"C:\Trading\ANT_OUT")
+
+ROUTER=OUT/"queen_strategy_router_lite.json"
+
+
+def load(p):
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def pad(v,w):
+    s=str(v)
+    return s[:w].ljust(w)
+
+
+def main():
+
+    doc=load(ROUTER)
+    markets=doc.get("markets",{})
+
+    print("")
+    print("QUEEN STRATEGY ROUTER PANEL")
+    print("")
+
+    headers=[
+        ("market",10),
+        ("strategy",8),
+        ("bias",7),
+        ("conf",6),
+        ("reason",24),
+        ("trend",9),
+        ("e4_bias",7),
+        ("colony",8),
+        ("final",6)
+    ]
+
+    print(" ".join(pad(h,w) for h,w in headers))
+    print(" ".join("-"*w for _,w in headers))
+
+    for m,row in sorted(markets.items()):
+
+        strategy=row.get("active_strategy","")
+        bias=row.get("route_bias","")
+        conf=row.get("route_confidence","")
+        reason=row.get("route_reason","")
+
+        trend=row.get("trend","")
+        e4_bias=row.get("edge4_bias","")
+        colony=row.get("colony_bias","")
+        final=row.get("final_size_mult","")
+
+        values=[
+            m,
+            strategy,
+            bias,
+            conf,
+            reason,
+            trend,
+            e4_bias,
+            colony,
+            final
+        ]
+
+        print(" ".join(pad(v,w) for v,(_,w) in zip(values,headers)))
+
+    print("")
+
+
+if __name__=="__main__":
+    main()

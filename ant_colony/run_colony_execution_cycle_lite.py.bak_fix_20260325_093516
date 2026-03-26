@@ -1,0 +1,136 @@
+﻿import os
+import sys
+import json
+import subprocess
+from datetime import datetime, UTC
+
+ROOT = r"C:\Users\vikke\OneDrive\bitvavo-bot_clean"
+PY = sys.executable
+
+STEPS = [
+    ("combined_colony_status", os.path.join(ROOT, "ant_colony", "combined_colony_status_lite.py")),
+    ("worker_market_data_producer", os.path.join(ROOT, "ant_colony", "worker_market_data_producer_lite.py")),
+    ("worker_market_data_refresh", os.path.join(ROOT, "ant_colony", "worker_market_data_refresh_lite.py")),
+    ("mark_to_market_equity_engine", os.path.join(ROOT, "ant_colony", "mark_to_market_equity_engine_lite.py")),
+    ("build_execution_intents", os.path.join(ROOT, "ant_colony", "build_execution_intents_lite.py")),
+    ("paper_execution_runner", os.path.join(ROOT, "ant_colony", "paper_execution_runner_lite.py")),
+    ("paper_trade_reconstruction", os.path.join(ROOT, "ant_colony", "paper_trade_reconstruction_lite.py")),
+    ("paper_trade_feedback", os.path.join(ROOT, "ant_colony", "paper_trade_feedback_lite.py")),
+    ("show_colony_ops_panel", os.path.join(ROOT, "ant_colony", "show_colony_ops_panel.py")),
+]
+
+SUMMARY_PATH = r"C:\Trading\ANT_OUT\execution_cycle_runner_lite.json"
+LAST_OK_PATH = r"C:\Trading\ANT_OUT\execution_cycle_runner_lite.last_ok.json"
+PAPER_SUMMARY_PATH = r"C:\Trading\ANT_OUT\paper_execution_summary.json"
+PORTFOLIO_SUMMARY_PATH = r"C:\Trading\ANT_OUT\paper_portfolio_summary.json"
+
+
+def write_json(path, obj):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
+
+
+def load_json(path):
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def extract_paper_summary():
+    src = load_json(PAPER_SUMMARY_PATH)
+    return {
+        "intents_processed": src.get("intents_processed", 0),
+        "intents_allowed": src.get("intents_allowed", 0),
+        "intents_skipped": src.get("intents_skipped", 0),
+        "log_file_exists": src.get("log_file_exists", False),
+        "executed_ids_count": src.get("executed_ids_count", 0),
+        "position_count": src.get("position_count", 0)
+    }
+
+
+def extract_portfolio_summary():
+    src = load_json(PORTFOLIO_SUMMARY_PATH)
+    return {
+        "state": src.get("state", "UNKNOWN"),
+        "cash": src.get("cash", 0),
+        "equity": src.get("equity", 0),
+        "positions_market_value": src.get("positions_market_value", 0),
+        "unrealized_pnl": src.get("unrealized_pnl", 0),
+        "open_positions": src.get("open_positions", 0),
+        "priced_positions": src.get("priced_positions", 0),
+        "unpriced_positions": src.get("unpriced_positions", 0),
+        "equity_calc_mode": src.get("equity_calc_mode", "unknown")
+    }
+
+
+def run_step(name, script_path):
+    started = datetime.now(UTC).isoformat()
+    result = subprocess.run(
+        [PY, script_path],
+        cwd=ROOT,
+        capture_output=True,
+        text=True
+    )
+    finished = datetime.now(UTC).isoformat()
+    return {
+        "name": name,
+        "script_path": script_path,
+        "started_utc": started,
+        "finished_utc": finished,
+        "returncode": result.returncode,
+        "ok": result.returncode == 0,
+        "stdout_tail": (result.stdout or "")[-4000:],
+        "stderr_tail": (result.stderr or "")[-4000:]
+    }
+
+
+def main():
+    ts = datetime.now(UTC).isoformat()
+    steps_out = []
+    overall_ok = True
+
+    for name, script_path in STEPS:
+        step = run_step(name, script_path)
+        steps_out.append(step)
+        if not step["ok"]:
+            overall_ok = False
+            break
+
+    summary = {
+        "component": "execution_cycle_runner_lite",
+        "ts_utc": ts,
+        "root": ROOT,
+        "python": PY,
+        "steps_total": len(STEPS),
+        "steps_completed": len(steps_out),
+        "ok": overall_ok,
+        "paper_execution_summary": extract_paper_summary(),
+        "paper_portfolio_summary": extract_portfolio_summary(),
+        "steps": steps_out
+    }
+
+    write_json(SUMMARY_PATH, summary)
+
+    if overall_ok:
+        last_ok = {
+            "component": "execution_cycle_runner_lite_last_ok",
+            "ts_utc": ts,
+            "root": ROOT,
+            "python": PY,
+            "steps_total": len(STEPS),
+            "steps_completed": len(steps_out),
+            "ok": True
+        }
+        write_json(LAST_OK_PATH, last_ok)
+
+    print(json.dumps(summary, indent=2))
+
+    if not overall_ok:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+

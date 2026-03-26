@@ -1,0 +1,26 @@
+﻿param(
+    [bool]$ExecutionEnabled = $false
+)
+
+$path = "C:\Trading\ANT_OUT\execution_control.json"
+
+if (-not (Test-Path $path)) {
+    throw "Missing file: $path"
+}
+
+$data = Get-Content $path -Raw | ConvertFrom-Json
+
+$tsUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+$data.ts_utc = $tsUtc
+$data.source_component = "execution_control_manual"
+$data.execution_enabled = $ExecutionEnabled
+
+foreach ($p in $data.markets.PSObject.Properties) {
+    $p.Value.execution_enabled = $false
+}
+
+$data | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8
+
+Write-Host "UPDATED $path"
+Get-Content $path

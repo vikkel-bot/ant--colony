@@ -1,0 +1,174 @@
+import json
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+VERSION = "colony_watchdog_check_lite_v4"
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+HEARTBEAT_PATH = OUT_DIR / "colony_cycle_loop_heartbeat.json"
+OUT_JSON = OUT_DIR / "colony_watchdog_check_lite.json"
+OUT_TSV = OUT_DIR / "colony_watchdog_check_lite.tsv"
+
+MAX_AGE_SECONDS = 90
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def now_dt():
+    return datetime.now(timezone.utc)
+
+
+def parse_iso_z(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def calc_age_seconds(ts_utc: str):
+    ts_dt = parse_iso_z(ts_utc)
+    if ts_dt is None:
+        return -1
+    return int((now_dt() - ts_dt).total_seconds())
+
+
+def read_json(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_json(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def write_tsv(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    keys = list(data.keys())
+    vals = [str(data.get(k, "")) for k in keys]
+    path.write_text("\t".join(keys) + "\n" + "\t".join(vals) + "\n", encoding="utf-8")
+
+
+def classify_runtime_state(last_ok: bool, stopped_reason: str):
+    reason = str(stopped_reason or "").upper()
+
+    if reason == "RUNNING" and last_ok:
+        return "RUNNING_OK", True, "ENGINE_RUNNING_OK"
+    if reason == "INTERRUPTED":
+        return "STOPPED_INTERRUPTED", False, "ENGINE_INTERRUPTED"
+    if reason == "MAX_CYCLES_REACHED":
+        return "STOPPED_MAX_CYCLES", False, "ENGINE_MAX_CYCLES_REACHED"
+    if reason == "RUNNER_FAILED":
+        return "STOPPED_FAILED", False, "ENGINE_RUNNER_FAILED"
+    if reason in ("LOCK_EXISTS", "LOCK_ACTIVE"):
+        return "LOCK_CONFLICT", False, "ENGINE_LOCK_CONFLICT"
+    if reason == "LOCK_STALE_DETECTED":
+        return "LOCK_STALE_CLEANED", False, "ENGINE_LOCK_STALE_CLEANED"
+    if last_ok:
+        return "STOPPED_OTHER_OK", False, "ENGINE_STOPPED_OK"
+    return "STOPPED_OTHER_ERROR", False, "ENGINE_STOPPED_ERROR"
+
+
+def trigger_recovery():
+    cmd = ROOT / "ant_colony" / "colony_recover_supervisor.cmd"
+
+    subprocess.Popen(
+        ["cmd.exe", "/c", "start", "", str(cmd)],
+        cwd=str(ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
+
+
+def main():
+    heartbeat_exists = HEARTBEAT_PATH.exists()
+    hb = read_json(HEARTBEAT_PATH)
+
+    heartbeat_ts_utc = str(hb.get("ts_utc", "") or "")
+    heartbeat_age_seconds = calc_age_seconds(heartbeat_ts_utc)
+    heartbeat_component = str(hb.get("component", "") or "")
+    heartbeat_pid = str(hb.get("pid", "") or "")
+    heartbeat_cycle_no = int(hb.get("cycle_no", 0) or 0)
+    heartbeat_last_ok = bool(hb.get("last_ok", False))
+    heartbeat_stopped_reason = str(hb.get("stopped_reason", "") or "")
+
+    if not heartbeat_exists:
+        watchdog_state = "MISSING"
+        runtime_state = "MISSING"
+        last_known_runtime_state = ""
+        engine_running = False
+        ok = False
+        reason = "HEARTBEAT_MISSING"
+    elif heartbeat_age_seconds < 0:
+        watchdog_state = "STALE"
+        runtime_state = "STALE"
+        last_known_runtime_state = ""
+        engine_running = False
+        ok = False
+        reason = "HEARTBEAT_TS_INVALID"
+    elif heartbeat_age_seconds > MAX_AGE_SECONDS:
+        last_known_runtime_state, _, _ = classify_runtime_state(heartbeat_last_ok, heartbeat_stopped_reason)
+        watchdog_state = "STALE"
+        runtime_state = "STALE"
+        engine_running = False
+        ok = False
+        reason = "ENGINE_NOT_RUNNING_OR_STALE"
+    else:
+        runtime_state, engine_running, reason = classify_runtime_state(heartbeat_last_ok, heartbeat_stopped_reason)
+        last_known_runtime_state = runtime_state
+        watchdog_state = "FRESH"
+        ok = bool(engine_running)
+
+    recovery_triggered = False
+    recovery_trigger_reason = ""
+
+    if watchdog_state in ("STALE", "MISSING") and not engine_running:
+        trigger_recovery()
+        recovery_triggered = True
+        recovery_trigger_reason = f"WATCHDOG_{watchdog_state}"
+
+    status = {
+        "version": VERSION,
+        "ts_utc": utc_now(),
+        "heartbeat_path": str(HEARTBEAT_PATH),
+        "max_age_seconds": MAX_AGE_SECONDS,
+        "heartbeat_exists": heartbeat_exists,
+        "heartbeat_ts_utc": heartbeat_ts_utc,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "heartbeat_component": heartbeat_component,
+        "heartbeat_pid": heartbeat_pid,
+        "heartbeat_cycle_no": heartbeat_cycle_no,
+        "heartbeat_last_ok": heartbeat_last_ok,
+        "heartbeat_stopped_reason": heartbeat_stopped_reason,
+        "watchdog_state": watchdog_state,
+        "runtime_state": runtime_state,
+        "last_known_runtime_state": last_known_runtime_state,
+        "engine_running": engine_running,
+        "ok": ok,
+        "reason": reason,
+        "recovery_triggered": recovery_triggered,
+        "recovery_trigger_reason": recovery_trigger_reason,
+    }
+
+    write_json(OUT_JSON, status)
+    write_tsv(OUT_TSV, status)
+    print(json.dumps(status, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

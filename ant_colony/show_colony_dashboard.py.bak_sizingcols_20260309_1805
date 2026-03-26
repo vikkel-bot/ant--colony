@@ -1,0 +1,252 @@
+import json
+from pathlib import Path
+
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+COMBINED_STATUS = OUT_DIR / "combined_colony_status.json"
+ALLOC_TARGETS = OUT_DIR / "alloc_targets.json"
+RISK_TARGETS = OUT_DIR / "colony_risk_targets.json"
+ROUTER_STATUS = OUT_DIR / "queen_strategy_router_lite.json"
+WORKER_EXEC_PLAN = OUT_DIR / "worker_execution_plan.json"
+WORKER_POSITION_SIZING = OUT_DIR / "worker_position_sizing.json"
+WORKER_PORTFOLIO = OUT_DIR / "worker_portfolio_state.json"
+WORKER_LIFECYCLE = OUT_DIR / "worker_trade_lifecycle.json"
+
+
+def load_json(path: Path):
+    if not path.exists():
+        return {}, f"missing:{path.name}"
+
+    encodings = ["utf-8-sig", "utf-8"]
+    last_error = None
+
+    for enc in encodings:
+        try:
+            text = path.read_text(encoding=enc)
+            return json.loads(text), None
+        except Exception as e:
+            last_error = e
+
+    return {}, f"read_error:{path.name}:{last_error}"
+
+
+def get_markets(doc):
+    if isinstance(doc, dict):
+        markets = doc.get("markets", {})
+        if isinstance(markets, dict):
+            return markets
+        if isinstance(markets, list):
+            out = {}
+            for row in markets:
+                if isinstance(row, dict):
+                    market = str(row.get("market", "") or "").strip()
+                    if market:
+                        out[market] = row
+            return out
+    return {}
+
+
+def text(v):
+    if v is None:
+        return ""
+    return str(v)
+
+
+def pad(v, width):
+    s = text(v)
+    if len(s) >= width:
+        return s[:width]
+    return s + (" " * (width - len(s)))
+
+
+def main():
+    combined_doc, combined_err = load_json(COMBINED_STATUS)
+    alloc_doc, alloc_err = load_json(ALLOC_TARGETS)
+    risk_doc, risk_err = load_json(RISK_TARGETS)
+    router_doc, router_err = load_json(ROUTER_STATUS)
+    exec_doc, exec_err = load_json(WORKER_EXEC_PLAN)
+    size_doc, size_err = load_json(WORKER_POSITION_SIZING)
+    port_doc, port_err = load_json(WORKER_PORTFOLIO)
+    life_doc, life_err = load_json(WORKER_LIFECYCLE)
+
+    combined_markets = get_markets(combined_doc)
+    alloc_markets = get_markets(alloc_doc)
+    risk_markets = get_markets(risk_doc)
+    router_markets = get_markets(router_doc)
+    exec_markets = get_markets(exec_doc)
+    size_markets = get_markets(size_doc)
+    port_markets = get_markets(port_doc)
+    life_markets = get_markets(life_doc)
+
+    all_markets = sorted(
+        set(combined_markets.keys()) |
+        set(alloc_markets.keys()) |
+        set(risk_markets.keys()) |
+        set(router_markets.keys()) |
+        set(exec_markets.keys()) |
+        set(size_markets.keys()) |
+        set(port_markets.keys()) |
+        set(life_markets.keys())
+    )
+
+    ts_utc = (
+        life_doc.get("ts_utc", "") or
+        port_doc.get("ts_utc", "") or
+        exec_doc.get("ts_utc", "") or
+        router_doc.get("ts_utc", "") or
+        combined_doc.get("ts_utc", "") or
+        risk_doc.get("ts_utc", "") or
+        alloc_doc.get("ts_utc", "")
+    )
+
+    print("")
+    print("UNIFIED ANT COLONY DASHBOARD")
+    print(f"ts_utc={ts_utc} markets={len(all_markets)}")
+    print("")
+
+    headers = [
+        ("market", 10),
+        ("trend", 9),
+        ("e3", 6),
+        ("e3_vol", 6),
+        ("e3_sz", 6),
+        ("e3_reason", 16),
+        ("e4", 4),
+        ("e4_bias", 8),
+        ("e4_l", 4),
+        ("e4_s", 4),
+        ("health", 6),
+        ("alloc", 6),
+        ("risk", 6),
+        ("final", 6),
+        ("route", 9),
+        ("bias", 8),
+        ("conf", 6),
+        ("exec_on", 7),
+        ("exec_bias", 9),
+        ("exec_size", 9),
+        ("pos", 6),
+        ("mark", 8),
+        ("upnl", 8),
+        ("equity", 10),
+        ("t_state", 10),
+        ("t_action", 15),
+        ("exec_mode", 15),
+        ("reason", 64),
+    ]
+
+    print(" ".join(pad(name, width) for name, width in headers))
+    print(" ".join("-" * width for _, width in headers))
+
+    for market in all_markets:
+        combined_row = combined_markets.get(market, {}) or {}
+        edge3_row = combined_row.get("edge3", {}) or {}
+        edge4_row = combined_row.get("edge4", {}) or {}
+        health_row = combined_row.get("health", {}) or {}
+
+        alloc_row = alloc_markets.get(market, {}) or {}
+        risk_row = risk_markets.get(market, {}) or {}
+        router_row = router_markets.get(market, {}) or {}
+        exec_row = exec_markets.get(market, {}) or {}
+        size_row = size_markets.get(market, {}) or {}
+        port_row = port_markets.get(market, {}) or {}
+        life_row = life_markets.get(market, {}) or {}
+
+        trend = edge3_row.get("cb20_trend", "")
+        e3 = edge3_row.get("gate", "")
+        e3_vol = edge3_row.get("cb20_vol", "")
+        e3_sz = edge3_row.get("size_mult", "")
+        e3_reason = edge3_row.get("cb21_reason", "")
+
+        e4 = edge4_row.get("state", "")
+        e4_bias = router_row.get("edge4_bias", "")
+        e4_l = edge4_row.get("long_signals", "")
+        e4_s = edge4_row.get("short_signals", "")
+        health = health_row.get("health_gate", "")
+
+        alloc_mult = alloc_row.get("target_size_mult", "")
+        risk_mult = risk_row.get("target_size_mult", "")
+        final_mult = router_row.get("final_size_mult", "") or risk_row.get("target_size_mult", "")
+
+        route = router_row.get("active_strategy", "")
+        bias = router_row.get("route_bias", "")
+        conf = router_row.get("route_confidence", "")
+
+        exec_on = exec_row.get("enabled", "")
+        exec_bias = exec_row.get("execution_bias", "")
+        exec_size = exec_row.get("execution_size_mult", "")
+        exec_mode = exec_row.get("execution_mode", "")
+
+        pos = port_row.get("position", "")
+        mark = port_row.get("mark_price", "")
+        upnl = port_row.get("pnl", "")
+        equity = port_row.get("equity", "")
+
+        t_state = life_row.get("trade_state", "")
+        t_action = life_row.get("lifecycle_action", "")
+
+        reason = (
+            exec_row.get("plan_reason", "") or
+            life_row.get("lifecycle_reason", "") or
+            router_row.get("route_reason", "") or
+            health_row.get("health_reason", "") or
+            risk_row.get("reason", "")
+        )
+
+        values = [
+            market,
+            trend,
+            e3,
+            e3_vol,
+            e3_sz,
+            e3_reason,
+            e4,
+            e4_bias,
+            e4_l,
+            e4_s,
+            health,
+            alloc_mult,
+            risk_mult,
+            final_mult,
+            route,
+            bias,
+            conf,
+            exec_on,
+            exec_bias,
+            exec_size,
+            pos,
+            mark,
+            upnl,
+            equity,
+            t_state,
+            t_action,
+            exec_mode,
+            reason,
+        ]
+
+        print(" ".join(pad(v, w) for v, (_, w) in zip(values, headers)))
+
+    print("")
+    print("SOURCES")
+    print(f"combined_status  = {COMBINED_STATUS}")
+    print(f"alloc_targets    = {ALLOC_TARGETS}")
+    print(f"risk_targets     = {RISK_TARGETS}")
+    print(f"router_status    = {ROUTER_STATUS}")
+    print(f"worker_exec_plan = {WORKER_EXEC_PLAN}")
+    print(f"worker_pos_size  = {WORKER_POSITION_SIZING}")
+    print(f"worker_portfolio = {WORKER_PORTFOLIO}")
+    print(f"worker_lifecycle = {WORKER_LIFECYCLE}")
+    print(f"combined_error   = {combined_err}")
+    print(f"alloc_error      = {alloc_err}")
+    print(f"risk_error       = {risk_err}")
+    print(f"router_error     = {router_err}")
+    print(f"exec_error       = {exec_err}")
+    print(f"size_error       = {size_err}")
+    print(f"port_error       = {port_err}")
+    print(f"life_error       = {life_err}")
+    print("")
+
+
+if __name__ == "__main__":
+    main()

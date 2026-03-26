@@ -1,0 +1,169 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+cd /d C:\Users\vikke\OneDrive\bitvavo-bot_clean
+
+set "PYEXE=C:\Users\vikke\OneDrive\bitvavo-bot_clean\.venv\Scripts\python.exe"
+set "CHECK_SCRIPT=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_watchdog_check_lite.py"
+set "START_SCRIPT=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_start_loop.cmd"
+
+set "OUT_DIR=C:\Trading\ANT_OUT"
+set "CHECK_JSON=%OUT_DIR%\colony_watchdog_check_lite.json"
+set "OUT_JSON=%OUT_DIR%\colony_watchdog_start_if_needed.json"
+set "LOCK_FILE=%OUT_DIR%\colony_cycle_loop_lite.lock"
+
+set "MAX_AGE_SECONDS=120"
+set "START_COOLDOWN_SECONDS=120"
+
+if not exist "%PYEXE%" (
+  echo ERROR: python not found: %PYEXE%
+  exit /b 1
+)
+
+if not exist "%CHECK_SCRIPT%" (
+  echo ERROR: watchdog script not found: %CHECK_SCRIPT%
+  exit /b 1
+)
+
+if not exist "%START_SCRIPT%" (
+  echo ERROR: start script not found: %START_SCRIPT%
+  exit /b 1
+)
+
+if not exist "%OUT_DIR%" (
+  mkdir "%OUT_DIR%"
+)
+
+echo RUNNING_COLONY_WATCHDOG_START_IF_NEEDED
+echo PYEXE=%PYEXE%
+echo CHECK_SCRIPT=%CHECK_SCRIPT%
+echo START_SCRIPT=%START_SCRIPT%
+echo MAX_AGE_SECONDS=%MAX_AGE_SECONDS%
+echo START_COOLDOWN_SECONDS=%START_COOLDOWN_SECONDS%
+
+set "ACTION=NO_START"
+set "RESULT=UNSET"
+set "CHECK_RC=999"
+set "FINAL_WATCHDOG_STATE="
+set "FINAL_RUNTIME_STATE="
+set "FINAL_LAST_KNOWN_RUNTIME_STATE="
+set "HEARTBEAT_PID="
+set "HEARTBEAT_CYCLE_NO=0"
+set "HEARTBEAT_AGE_SECONDS=-1"
+set "COOLDOWN_ACTIVE=False"
+set "COOLDOWN_AGE_SECONDS=-1"
+set "LOCK_PRESENT=False"
+set "LOCK_PID="
+set "LOCK_REASON="
+set "DECISION_REASON=INIT"
+
+"%PYEXE%" -c "import json, pathlib, datetime; out_path=pathlib.Path(r'%OUT_JSON%'); now=datetime.datetime.now(datetime.timezone.utc); age=-1; active=False; prev={}; 
+if out_path.exists():
+    try:
+        prev=json.loads(out_path.read_text(encoding='utf-8'))
+    except Exception:
+        prev={}
+ts=str(prev.get('ts_utc','') or '')
+action=str(prev.get('action','') or '')
+if ts:
+    try:
+        dt=datetime.datetime.fromisoformat(ts.replace('Z','+00:00'))
+        age=int((now-dt).total_seconds())
+    except Exception:
+        age=-1
+if action=='START_LOOP' and age >= 0 and age < int(r'%START_COOLDOWN_SECONDS%'):
+    active=True
+print(json.dumps({'cooldown_active':active,'cooldown_age_seconds':age}))" > "%OUT_DIR%\colony_watchdog_start_if_needed_cooldown.tmp.json"
+
+for /f "usebackq delims=" %%A in (`type "%OUT_DIR%\colony_watchdog_start_if_needed_cooldown.tmp.json"`) do set "COOLDOWN_JSON=%%A"
+del "%OUT_DIR%\colony_watchdog_start_if_needed_cooldown.tmp.json" >nul 2>nul
+
+for /f "tokens=1,2 delims==" %%A in ('"%PYEXE%" -c "import json; d=json.loads(r'''!COOLDOWN_JSON!'''); print('COOLDOWN_ACTIVE=' + str(d.get('cooldown_active', False))); print('COOLDOWN_AGE_SECONDS=' + str(d.get('cooldown_age_seconds', -1)))"') do (
+  set "%%A=%%B"
+)
+
+if /I "!COOLDOWN_ACTIVE!"=="True" (
+  echo WATCHDOG_RESULT=NO_START_COOLDOWN
+  set "ACTION=NO_START"
+  set "RESULT=COOLDOWN_ACTIVE"
+  set "DECISION_REASON=NO_START_COOLDOWN"
+  goto write_output
+)
+
+if exist "%LOCK_FILE%" (
+  set "LOCK_PRESENT=True"
+  set /p LOCK_PID=<"%LOCK_FILE%"
+  echo WATCHDOG_RESULT=NO_START_ACTIVE_LOCK
+  set "ACTION=NO_START"
+  set "RESULT=LOCK_PRESENT"
+  set "LOCK_REASON=LOCK_FILE_PRESENT"
+  set "DECISION_REASON=NO_START_ACTIVE_LOCK"
+  goto write_output
+)
+
+"%PYEXE%" "%CHECK_SCRIPT%" %MAX_AGE_SECONDS%
+set "CHECK_RC=%ERRORLEVEL%"
+
+if exist "%CHECK_JSON%" (
+  for /f "tokens=1,2 delims==" %%A in ('"%PYEXE%" -c "import json, pathlib; p=pathlib.Path(r'%CHECK_JSON%'); d=json.loads(p.read_text(encoding='utf-8')); print('FINAL_WATCHDOG_STATE=' + str(d.get('watchdog_state',''))); print('FINAL_RUNTIME_STATE=' + str(d.get('runtime_state',''))); print('FINAL_LAST_KNOWN_RUNTIME_STATE=' + str(d.get('last_known_runtime_state',''))); print('HEARTBEAT_PID=' + str(d.get('heartbeat_pid',''))); print('HEARTBEAT_CYCLE_NO=' + str(int(d.get('heartbeat_cycle_no',0) or 0))); print('HEARTBEAT_AGE_SECONDS=' + str(int(d.get('heartbeat_age_seconds',-1) or -1)))"') do (
+    set "%%A=%%B"
+  )
+)
+
+if "%CHECK_RC%"=="0" (
+  echo WATCHDOG_RESULT=NO_START_FRESH_HEARTBEAT
+  set "ACTION=NO_START"
+  set "RESULT=ENGINE_ALREADY_RUNNING_OK"
+  set "DECISION_REASON=NO_START_FRESH_HEARTBEAT"
+  goto write_output
+)
+
+if exist "%LOCK_FILE%" (
+  set "LOCK_PRESENT=True"
+  set /p LOCK_PID=<"%LOCK_FILE%"
+  echo WATCHDOG_RESULT=NO_START_ACTIVE_LOCK_AFTER_CHECK
+  set "ACTION=NO_START"
+  set "RESULT=LOCK_PRESENT_AFTER_CHECK"
+  set "LOCK_REASON=LOCK_FILE_PRESENT_AFTER_CHECK"
+  set "DECISION_REASON=NO_START_ACTIVE_LOCK_AFTER_CHECK"
+  goto write_output
+)
+
+echo WATCHDOG_RESULT=START_LOOP
+echo STARTING_COLONY_LOOP_IN_NEW_WINDOW
+start "COLONY_LOOP" cmd /k C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_start_loop.cmd
+set "ACTION=START_LOOP"
+set "RESULT=ENGINE_NOT_RUNNING_OR_STALE"
+set "DECISION_REASON=START_LOOP"
+
+:write_output
+"%PYEXE%" -c "import json, pathlib, datetime; out_path=pathlib.Path(r'%OUT_JSON%'); check_path=pathlib.Path(r'%CHECK_JSON%'); check={}; 
+if check_path.exists():
+    try:
+        check=json.loads(check_path.read_text(encoding='utf-8'))
+    except Exception:
+        check={}
+data={
+  'component':'colony_watchdog_start_if_needed',
+  'ts_utc':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
+  'check_rc':int(r'%CHECK_RC%'),
+  'max_age_seconds':int(r'%MAX_AGE_SECONDS%'),
+  'start_cooldown_seconds':int(r'%START_COOLDOWN_SECONDS%'),
+  'cooldown_active':str(r'%COOLDOWN_ACTIVE%').lower()=='true',
+  'cooldown_age_seconds':int(r'%COOLDOWN_AGE_SECONDS%'),
+  'lock_present':str(r'%LOCK_PRESENT%').lower()=='true',
+  'lock_pid':r'%LOCK_PID%',
+  'lock_reason':r'%LOCK_REASON%',
+  'action':r'%ACTION%',
+  'result':r'%RESULT%',
+  'decision_reason':r'%DECISION_REASON%',
+  'watchdog_state':r'%FINAL_WATCHDOG_STATE%' or check.get('watchdog_state',''),
+  'runtime_state':r'%FINAL_RUNTIME_STATE%' or check.get('runtime_state',''),
+  'last_known_runtime_state':r'%FINAL_LAST_KNOWN_RUNTIME_STATE%' or check.get('last_known_runtime_state',''),
+  'heartbeat_pid':r'%HEARTBEAT_PID%' or str(check.get('heartbeat_pid','')),
+  'heartbeat_cycle_no':int(r'%HEARTBEAT_CYCLE_NO%' or 0),
+  'heartbeat_age_seconds':int(r'%HEARTBEAT_AGE_SECONDS%' or -1)
+}
+out_path.write_text(json.dumps(data, indent=2), encoding='utf-8')"
+
+exit /b 0

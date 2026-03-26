@@ -1,0 +1,99 @@
+from pathlib import Path
+import json
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ant_colony.broker_adapters import BitvavoAdapter
+
+
+CACHE_CANDIDATES = [
+    Path(r"C:\Trading\EDGE3\ant_colony\workers\BTC-EUR\data_cache\BTC-EUR_4h_candles.json"),
+    Path(r"C:\Trading\EDGE3\var\data_cache\BTC-EUR_4h_candles.json"),
+    Path(r"C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\data_cache\BTC-EUR_4h_candles.json"),
+    Path(r"C:\Users\vikke\OneDrive\bitvavo-bot_clean\data_cache\BTC-EUR_4h_candles.json"),
+]
+
+
+def resolve_cache_path():
+    for p in CACHE_CANDIDATES:
+        if p.exists():
+            return p
+    return None
+
+
+def load_edge3_cache(path: Path):
+    if path is None or not path.exists():
+        return None
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def extract_last_edge3(cache):
+    if not cache:
+        return None
+
+    candles = cache.get("candles") if isinstance(cache, dict) else cache
+    if not candles or not isinstance(candles, list):
+        return None
+
+    last = candles[-1]
+    if not isinstance(last, list) or len(last) < 6:
+        return None
+
+    return {
+        "ts_ms": int(last[0]),
+        "open": float(last[1]),
+        "high": float(last[2]),
+        "low": float(last[3]),
+        "close": float(last[4]),
+        "volume": float(last[5]),
+    }
+
+
+def main():
+    adapter = BitvavoAdapter(
+        ops_log_path=r"C:\Trading\ANT_OUT\bitvavo_adapter_ops.jsonl"
+    )
+
+    cache_path = resolve_cache_path()
+    edge3_cache = load_edge3_cache(cache_path)
+    edge3_last = extract_last_edge3(edge3_cache)
+
+    adapter_result = adapter.get_market_data("BTC-EUR", "4h", 50)
+    adapter_data = adapter_result.get("data") or {}
+    adapter_rows = adapter_data.get("rows") or []
+    adapter_last = adapter_rows[-1] if adapter_rows else None
+
+    compare = {
+        "cache_path_used": str(cache_path) if cache_path else None,
+        "adapter_ok": adapter_result.get("ok"),
+        "adapter_count": len(adapter_rows),
+        "adapter_last": adapter_last,
+        "edge3_last": edge3_last,
+    }
+
+    if adapter_last and edge3_last:
+        try:
+            adapter_close = float(adapter_last["close"])
+            edge3_close = float(edge3_last["close"])
+            diff_pct = ((adapter_close - edge3_close) / edge3_close) * 100.0
+            compare["close_diff_pct"] = diff_pct
+        except Exception:
+            compare["close_diff_pct"] = None
+
+    print("=== COMPARISON ===")
+    print(json.dumps(compare, indent=2))
+
+    out = Path(r"C:\Trading\ANT_OUT\adapter_vs_edge3_market_compare.json")
+    out.write_text(json.dumps(compare, indent=2), encoding="utf-8")
+    print(f"WROTE {out}")
+
+
+if __name__ == "__main__":
+    main()

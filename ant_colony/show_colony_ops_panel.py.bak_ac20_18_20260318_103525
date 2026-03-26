@@ -1,0 +1,140 @@
+﻿import json
+from pathlib import Path
+
+
+STATUS_FILE = Path(r"C:\Trading\ANT_OUT\combined_colony_status.json")
+EXEC_SUMMARY_FILE = Path(r"C:\Trading\ANT_OUT\execution_summary.json")
+
+
+def load_json(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Missing file: {path}")
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def try_load_json(path: Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+
+
+def yn(value):
+    if value is True:
+        return "Y"
+    if value is False:
+        return "N"
+    return ""
+
+
+def safe(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
+def main():
+    data = load_json(STATUS_FILE)
+    exec_summary = try_load_json(EXEC_SUMMARY_FILE) or {}
+
+    ts_utc = data.get("ts_utc", "")
+    markets = data.get("markets", {}) or {}
+    freshness = data.get("freshness", {}) or {}
+    sources = data.get("sources", {}) or {}
+    control_meta = sources.get("execution_control_meta", {}) or {}
+
+    headers = [
+        "market",
+        "e3_gate",
+        "e3_trend",
+        "e4_state",
+        "health",
+        "size",
+        "probe_on",
+        "adapter_ok",
+        "parity_ok",
+        "lat_ms",
+        "fresh_ok",
+        "exec_on",
+        "mkt_exec_on",
+        "exec_allowed",
+        "exec_reason",
+    ]
+
+    rows = []
+
+    for market in sorted(markets.keys()):
+        row = markets.get(market) or {}
+        edge3 = row.get("edge3") or {}
+        edge4 = row.get("edge4") or {}
+        health = row.get("health") or {}
+        probe = row.get("adapter_probe") or {}
+        readiness = row.get("execution_readiness") or {}
+
+        rows.append([
+            market,
+            safe(edge3.get("gate")),
+            safe(edge3.get("cb20_trend")),
+            safe(edge4.get("state")),
+            safe(health.get("health_gate")),
+            safe(health.get("health_size_mult")),
+            yn(probe.get("probe_enabled")),
+            yn(probe.get("adapter_ok")),
+            yn(probe.get("parity_ok")),
+            safe(probe.get("latency_ms")),
+            yn(readiness.get("freshness_ok")),
+            yn(readiness.get("global_execution_enabled")),
+            yn(readiness.get("market_execution_enabled")),
+            yn(readiness.get("allowed")),
+            safe(readiness.get("reason")),
+        ])
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def fmt_row(values):
+        return "  ".join(values[i].ljust(widths[i]) for i in range(len(values)))
+
+    print()
+    print("=" * 180)
+    print("COLONY OPS PANEL")
+    print("=" * 180)
+    print()
+    print(f"STATUS_FILE : {STATUS_FILE}")
+    print(f"TS_UTC      : {ts_utc}")
+    print(f"MARKETS     : {len(rows)}")
+    print()
+    print("CONTROL DIAGNOSTICS")
+    print(f"  exec_control_error : {safe(sources.get('execution_control_error'))}")
+    print(f"  exec_control_fresh : {yn(freshness.get('execution_control_fresh'))}")
+    print(f"  exec_control_ts    : {safe(control_meta.get('ts_utc'))}")
+    print(f"  exec_control_age_s : {safe(((control_meta.get('freshness') or {}).get('age_s')))}")
+
+    if exec_summary:
+        print()
+        print("EXECUTION SUMMARY")
+        print(f"  allowed_count : {safe(exec_summary.get('allowed_count'))}")
+        print(f"  blocked_count : {safe(exec_summary.get('blocked_count'))}")
+        reason_counts = exec_summary.get("reason_counts", {}) or {}
+        if reason_counts:
+            print("  reason_counts :")
+            for key in sorted(reason_counts.keys()):
+                print(f"    - {key} = {reason_counts[key]}")
+
+    print()
+    print(fmt_row(headers))
+    print(fmt_row(["-" * w for w in widths]))
+
+    for row in rows:
+        print(fmt_row(row))
+
+    print()
+    print("LEGEND: Y=yes, N=no, blank=not available for that market")
+
+
+if __name__ == "__main__":
+    main()

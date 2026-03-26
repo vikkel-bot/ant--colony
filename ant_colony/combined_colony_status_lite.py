@@ -1,0 +1,431 @@
+﻿import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+EDGE3_PATH = OUT_DIR / "colony_status.json"
+EDGE4_PATH = OUT_DIR / "edge4_colony_status.json"
+HEALTH_PATH = OUT_DIR / "market_health.json"
+EXECUTION_CONTROL_PATH = OUT_DIR / "execution_control.json"
+
+OUT_PATH = OUT_DIR / "combined_colony_status.json"
+TSV_PATH = OUT_DIR / "combined_colony_status.tsv"
+
+FRESHNESS_MAX_AGE_S = 120.0
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def now_parts():
+    dt = utc_now()
+    ts_utc = dt.isoformat().replace("+00:00", "Z")
+    cycle_id = dt.strftime("%Y%m%dT%H%M%SZ")
+    return dt, ts_utc, cycle_id
+
+
+def parse_ts_utc(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def age_seconds_from_ts(value, now_dt):
+    dt = parse_ts_utc(value)
+    if dt is None:
+        return None
+    try:
+        return round(max(0.0, (now_dt - dt).total_seconds()), 3)
+    except Exception:
+        return None
+
+
+def freshness_dict(ts_value, now_dt, max_age_s=FRESHNESS_MAX_AGE_S):
+    age_s = age_seconds_from_ts(ts_value, now_dt)
+    return {
+        "ts_utc": ts_value,
+        "age_s": age_s,
+        "max_age_s": max_age_s,
+        "fresh": bool(age_s is not None and age_s <= max_age_s),
+    }
+
+
+def load_json(path: Path):
+    if not path.exists():
+        return None, f"missing:{path.name}"
+
+    encodings = ["utf-8-sig", "utf-8"]
+    last_error = None
+
+    for enc in encodings:
+        try:
+            text = path.read_text(encoding=enc)
+            return json.loads(text), None
+        except Exception as e:
+            last_error = e
+
+    return None, f"read_error:{path.name}:{last_error}"
+
+
+def meta_from_doc(doc, fallback_component, now_dt):
+    if not isinstance(doc, dict):
+        return {
+            "source_component": fallback_component,
+            "ts_utc": None,
+            "cycle_id": None,
+            "freshness": freshness_dict(None, now_dt),
+        }
+
+    ts_utc = doc.get("ts_utc")
+
+    return {
+        "source_component": doc.get("source_component", doc.get("component", fallback_component)),
+        "ts_utc": ts_utc,
+        "cycle_id": doc.get("cycle_id"),
+        "freshness": freshness_dict(ts_utc, now_dt),
+    }
+
+
+def load_probe_status_files():
+    probe_files = sorted(OUT_DIR.glob("*_worker_adapter_probe_status.json"))
+    probe_jsons = []
+    probe_errors = {}
+
+    for path in probe_files:
+        data, err = load_json(path)
+        if err:
+            probe_errors[path.name] = err
+        elif isinstance(data, dict):
+            probe_jsons.append((path, data))
+
+    return probe_jsons, probe_errors
+
+
+def build_edge3_map(edge3_json):
+    markets = {}
+    workers = edge3_json.get("workers", []) if isinstance(edge3_json, dict) else []
+
+    for row in workers:
+        market = row.get("market")
+        if not market:
+            continue
+
+        cb20 = row.get("cb20") or {}
+        cb21 = row.get("cb21") or {}
+
+        markets[market] = {
+            "component": "edge3_colony_status_lite",
+            "state": "ok",
+            "gate": row.get("gate"),
+            "size_mult": row.get("size_mult"),
+            "cb21_reason": cb21.get("edge3_health_reason"),
+            "cb20_trend": cb21.get("cb20_trend", cb20.get("trend_regime")),
+            "cb20_vol": cb21.get("cb20_vol", cb20.get("vol_regime")),
+        }
+
+    return markets
+
+
+def build_edge4_map(edge4_json):
+    markets = {}
+    src = edge4_json.get("markets", {}) if isinstance(edge4_json, dict) else {}
+
+    for market, row in src.items():
+        markets[market] = {
+            "component": row.get("component", "edge4_worker_lite"),
+            "state": row.get("state"),
+            "ok": row.get("ok"),
+            "long_signals": row.get("long_signals"),
+            "short_signals": row.get("short_signals"),
+        }
+
+    return markets
+
+
+def build_health_map(health_json):
+    markets = {}
+    src = health_json.get("markets", {}) if isinstance(health_json, dict) else {}
+
+    for market, row in src.items():
+        markets[market] = {
+            "health_gate": row.get("health_gate"),
+            "health_size_mult": row.get("health_size_mult"),
+            "health_reason": row.get("health_reason"),
+            "state_fresh": row.get("state_fresh"),
+            "stale": row.get("stale"),
+        }
+
+    return markets
+
+
+def build_probe_map(probe_jsons, now_dt):
+    markets = {}
+
+    for path, probe_json in probe_jsons:
+        market = str(probe_json.get("market", "") or "")
+        if not market:
+            continue
+
+        probe_ts = probe_json.get("last_probe_ts_utc") or probe_json.get("ts_utc")
+
+        markets[market] = {
+            "component": "worker_adapter_probe_status",
+            "probe_file": path.name,
+            "probe_enabled": probe_json.get("probe_enabled"),
+            "adapter_ok": probe_json.get("adapter_ok"),
+            "parity_ok": probe_json.get("parity_ok"),
+            "latency_ms": probe_json.get("latency_ms"),
+            "adapter_source": probe_json.get("adapter_source"),
+            "last_probe_ts_utc": probe_json.get("last_probe_ts_utc"),
+            "probe_cycle_id": probe_json.get("cycle_id"),
+            "probe_source_component": probe_json.get("source_component", probe_json.get("component", "worker_adapter_probe_status")),
+            "freshness": freshness_dict(probe_ts, now_dt),
+            "error": probe_json.get("error"),
+        }
+
+    return markets
+
+
+def build_execution_control_map(execution_control_json, execution_control_err, now_dt):
+    control_meta = meta_from_doc(execution_control_json, "execution_control_manual", now_dt)
+
+    if not isinstance(execution_control_json, dict):
+        return {
+            "missing_input": bool(execution_control_err and str(execution_control_err).startswith("missing:")),
+            "load_error": execution_control_err,
+            "global_execution_enabled": False,
+            "global_freshness": control_meta.get("freshness"),
+            "markets": {},
+        }
+
+    return {
+        "missing_input": False,
+        "load_error": execution_control_err,
+        "global_execution_enabled": bool(execution_control_json.get("execution_enabled", False)),
+        "global_freshness": control_meta.get("freshness"),
+        "markets": execution_control_json.get("markets", {}) or {},
+    }
+
+
+def compute_execution_readiness(market, row, execution_control_map, global_freshness):
+    edge3 = row.get("edge3") or {}
+    health = row.get("health") or {}
+    probe = row.get("adapter_probe") or {}
+
+    global_execution_enabled = bool(execution_control_map.get("global_execution_enabled", False))
+    market_control = (execution_control_map.get("markets") or {}).get(market, {}) or {}
+    market_execution_enabled = bool(market_control.get("execution_enabled", False))
+
+    probe_enabled = probe.get("probe_enabled")
+    adapter_ok = probe.get("adapter_ok")
+    parity_ok = probe.get("parity_ok")
+    probe_fresh = bool(((probe.get("freshness") or {}).get("fresh")))
+
+    health_gate = health.get("health_gate")
+    edge3_gate = edge3.get("gate")
+
+    allowed = False
+    reason = "EXECUTION_DISABLED"
+
+    if execution_control_map.get("missing_input", False):
+        reason = "MISSING_INPUT"
+    elif execution_control_map.get("load_error"):
+        reason = "CONTROL_ERROR"
+    elif not global_execution_enabled:
+        reason = "EXECUTION_DISABLED"
+    elif not market_execution_enabled:
+        reason = "MARKET_EXECUTION_DISABLED"
+    elif probe and probe_enabled is not True:
+        reason = "PROBE_DISABLED"
+    elif probe and adapter_ok is not True:
+        reason = "ADAPTER_NOT_OK"
+    elif probe and parity_ok is not True:
+        reason = "PARITY_FAIL"
+    elif probe and not probe_fresh:
+        reason = "PROBE_STALE"
+    elif not global_freshness.get("freshness_ok", False):
+        reason = "STALE_STATUS"
+    elif health_gate != "ALLOW":
+        reason = "HEALTH_BLOCKED"
+    elif edge3_gate != "ALLOW":
+        reason = "GATE_BLOCKED"
+    else:
+        allowed = True
+        reason = "ALLOW"
+
+    return {
+        "global_execution_enabled": global_execution_enabled,
+        "market_execution_enabled": market_execution_enabled,
+        "freshness_ok": bool(global_freshness.get("freshness_ok", False)),
+        "probe_enabled": probe_enabled,
+        "adapter_ok": adapter_ok,
+        "parity_ok": parity_ok,
+        "probe_fresh": probe_fresh,
+        "health_gate": health_gate,
+        "edge3_gate": edge3_gate,
+        "allowed": allowed,
+        "reason": reason,
+    }
+
+
+def write_tsv(ts_utc, cycle_id, combined_markets):
+    headers = [
+        "ts_utc",
+        "cycle_id",
+        "market",
+        "edge3_gate",
+        "edge3_trend",
+        "edge4_state",
+        "health_gate",
+        "health_size_mult",
+        "probe_enabled",
+        "probe_adapter_ok",
+        "probe_parity_ok",
+        "probe_latency_ms",
+        "probe_fresh",
+        "exec_global_on",
+        "exec_market_on",
+        "exec_allowed",
+        "exec_reason",
+    ]
+
+    lines = ["`t".join(headers)]
+
+    for market in sorted(combined_markets.keys()):
+        row = combined_markets[market]
+        edge3 = row.get("edge3") or {}
+        edge4 = row.get("edge4") or {}
+        health = row.get("health") or {}
+        probe = row.get("adapter_probe") or {}
+        probe_freshness = probe.get("freshness") or {}
+        execution_readiness = row.get("execution_readiness") or {}
+
+        values = [
+            ts_utc,
+            cycle_id,
+            market,
+            str(edge3.get("gate", "")),
+            str(edge3.get("cb20_trend", "")),
+            str(edge4.get("state", "")),
+            str(health.get("health_gate", "")),
+            str(health.get("health_size_mult", "")),
+            str(probe.get("probe_enabled", "")),
+            str(probe.get("adapter_ok", "")),
+            str(probe.get("parity_ok", "")),
+            str(probe.get("latency_ms", "")),
+            str(probe_freshness.get("fresh", "")),
+            str(execution_readiness.get("global_execution_enabled", "")),
+            str(execution_readiness.get("market_execution_enabled", "")),
+            str(execution_readiness.get("allowed", "")),
+            str(execution_readiness.get("reason", "")),
+        ]
+
+        lines.append("`t".join(values))
+
+    TSV_PATH.write_text("`n".join(lines) + "`n", encoding="utf-8")
+
+
+def main():
+    now_dt, ts_utc, cycle_id = now_parts()
+
+    edge3_json, edge3_err = load_json(EDGE3_PATH)
+    edge4_json, edge4_err = load_json(EDGE4_PATH)
+    health_json, health_err = load_json(HEALTH_PATH)
+    execution_control_json, execution_control_err = load_json(EXECUTION_CONTROL_PATH)
+
+    probe_jsons, probe_errors = load_probe_status_files()
+
+    edge3_markets = build_edge3_map(edge3_json)
+    edge4_markets = build_edge4_map(edge4_json)
+    health_markets = build_health_map(health_json)
+    probe_markets = build_probe_map(probe_jsons, now_dt)
+    execution_control_map = build_execution_control_map(execution_control_json, execution_control_err, now_dt)
+
+    all_markets = sorted(
+        set(edge3_markets.keys()) |
+        set(edge4_markets.keys()) |
+        set(health_markets.keys()) |
+        set(probe_markets.keys()) |
+        set((execution_control_map.get("markets") or {}).keys())
+    )
+
+    edge3_meta = meta_from_doc(edge3_json, "edge3_colony_status_lite", now_dt)
+    edge4_meta = meta_from_doc(edge4_json, "edge4_colony_status_lite", now_dt)
+    health_meta = meta_from_doc(health_json, "market_health_lite", now_dt)
+    execution_control_meta = meta_from_doc(execution_control_json, "execution_control_manual", now_dt)
+
+    global_freshness = {
+        "edge3_fresh": bool((edge3_meta.get("freshness") or {}).get("fresh")),
+        "edge4_fresh": bool((edge4_meta.get("freshness") or {}).get("fresh")),
+        "health_fresh": bool((health_meta.get("freshness") or {}).get("fresh")),
+        "execution_control_fresh": bool((execution_control_meta.get("freshness") or {}).get("fresh")),
+        "freshness_ok": all([
+            bool((edge3_meta.get("freshness") or {}).get("fresh")),
+            bool((edge4_meta.get("freshness") or {}).get("fresh")),
+            bool((health_meta.get("freshness") or {}).get("fresh")),
+            bool((execution_control_meta.get("freshness") or {}).get("fresh")),
+        ])
+    }
+
+    combined_markets = {}
+
+    for market in all_markets:
+        row = {
+            "edge3": edge3_markets.get(market),
+            "edge4": edge4_markets.get(market),
+            "health": health_markets.get(market),
+            "adapter_probe": probe_markets.get(market),
+        }
+        row["execution_readiness"] = compute_execution_readiness(
+            market=market,
+            row=row,
+            execution_control_map=execution_control_map,
+            global_freshness=global_freshness,
+        )
+        combined_markets[market] = row
+
+    out = {
+        "version": "combined_colony_status_lite_v6",
+        "ts_utc": ts_utc,
+        "cycle_id": cycle_id,
+        "source_component": "combined_colony_status_lite",
+        "component": "combined_colony_status_lite",
+        "freshness_policy": {
+            "max_age_s": FRESHNESS_MAX_AGE_S
+        },
+        "freshness": global_freshness,
+        "sources": {
+            "edge3_source": str(EDGE3_PATH),
+            "edge4_source": str(EDGE4_PATH),
+            "health_source": str(HEALTH_PATH),
+            "execution_control_source": str(EXECUTION_CONTROL_PATH),
+            "probe_sources": [str(path) for path, _ in probe_jsons],
+            "edge3_error": edge3_err,
+            "edge4_error": edge4_err,
+            "health_error": health_err,
+            "execution_control_error": execution_control_err,
+            "probe_errors": probe_errors,
+            "edge3_meta": edge3_meta,
+            "edge4_meta": edge4_meta,
+            "health_meta": health_meta,
+            "execution_control_meta": execution_control_meta,
+        },
+        "market_count": len(all_markets),
+        "markets": combined_markets,
+    }
+
+    OUT_PATH.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    write_tsv(ts_utc, cycle_id, combined_markets)
+
+    print(f"WROTE {OUT_PATH}")
+    print(f"WROTE {TSV_PATH}")
+
+
+if __name__ == "__main__":
+    main()

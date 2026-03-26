@@ -1,0 +1,10 @@
+{
+  "ts_utc": "2026-03-10T11:13:58.819952+00:00",
+  "market": "XRP-EUR",
+  "interval": "4h",
+  "trend_regime": "BEAR",
+  "vol_regime": "LOW",
+  "gate": "ALLOW",
+  "size_mult": 1.0,
+  "source_cache": "XRP-EUR_4h_candles.json"
+}

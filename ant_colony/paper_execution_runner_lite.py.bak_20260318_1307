@@ -1,0 +1,147 @@
+﻿import os
+import json
+import glob
+from datetime import datetime, UTC
+
+ANT_OUT = r"C:\Trading\ANT_OUT"
+
+INTENT_PATTERN = os.path.join(ANT_OUT, "*_execution_intent.json")
+
+LOG_FILE = os.path.join(ANT_OUT, "paper_execution_log.jsonl")
+POSITIONS_FILE = os.path.join(ANT_OUT, "paper_positions.json")
+SUMMARY_FILE = os.path.join(ANT_OUT, "paper_execution_summary.json")
+EXECUTED_FILE = os.path.join(ANT_OUT, "paper_executed_ids.json")
+PORTFOLIO_FILE = os.path.join(ANT_OUT, "paper_portfolio_state.json")
+
+
+def load_json(path):
+    if not os.path.exists(path):
+        return None
+    with open(path,"r",encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path,obj):
+    with open(path,"w",encoding="utf-8") as f:
+        json.dump(obj,f,indent=2)
+
+
+def append_jsonl(path,obj):
+    with open(path,"a",encoding="utf-8") as f:
+        f.write(json.dumps(obj)+"\n")
+
+
+def load_positions():
+    if not os.path.exists(POSITIONS_FILE):
+        return {}
+    return load_json(POSITIONS_FILE)
+
+
+def save_positions(p):
+    save_json(POSITIONS_FILE,p)
+
+
+def load_executed_ids():
+    if not os.path.exists(EXECUTED_FILE):
+        return set()
+    with open(EXECUTED_FILE,"r") as f:
+        return set(json.load(f))
+
+
+def save_executed_ids(ids):
+    with open(EXECUTED_FILE,"w") as f:
+        json.dump(sorted(list(ids)),f,indent=2)
+
+
+def load_portfolio():
+    if not os.path.exists(PORTFOLIO_FILE):
+        return {
+            "equity":10000,
+            "cash":10000,
+            "positions":{}
+        }
+    return load_json(PORTFOLIO_FILE)
+
+
+def save_portfolio(p):
+    save_json(PORTFOLIO_FILE,p)
+
+
+def run():
+
+    ts = datetime.now(UTC).isoformat()
+
+    positions = load_positions()
+    executed_ids = load_executed_ids()
+    portfolio = load_portfolio()
+
+    intents = glob.glob(INTENT_PATTERN)
+
+    processed = 0
+    allowed = 0
+    skipped = 0
+
+    for path in intents:
+
+        intent = load_json(path)
+        if not intent:
+            continue
+
+        market = intent.get("market")
+        allow = intent.get("allow",False)
+        cycle_id = intent.get("cycle_id")
+
+        processed += 1
+
+        if not allow:
+            skipped += 1
+            continue
+
+        execution_id = f"{market}_{cycle_id}"
+
+        if execution_id in executed_ids:
+            skipped += 1
+            continue
+
+        allowed += 1
+        executed_ids.add(execution_id)
+
+        log_event = {
+            "ts":ts,
+            "market":market,
+            "cycle_id":cycle_id,
+            "execution_id":execution_id,
+            "event":"PAPER_FILL",
+            "price":0,
+            "size":0
+        }
+
+        append_jsonl(LOG_FILE,log_event)
+
+        pos = positions.get(market,{
+            "market":market,
+            "position":"FLAT",
+            "size":0
+        })
+
+        positions[market] = pos
+
+    save_positions(positions)
+    save_executed_ids(executed_ids)
+    save_portfolio(portfolio)
+
+    summary = {
+        "component":"paper_execution_runner_lite",
+        "ts":ts,
+        "intents_processed":processed,
+        "intents_allowed":allowed,
+        "intents_skipped":skipped
+    }
+
+    save_json(SUMMARY_FILE,summary)
+
+    print(json.dumps(summary,indent=2))
+
+
+if __name__ == "__main__":
+    run()

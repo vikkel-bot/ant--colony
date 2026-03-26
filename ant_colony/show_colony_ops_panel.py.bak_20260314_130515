@@ -1,0 +1,301 @@
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+VERSION = "show_colony_ops_panel_v6"
+SUPERVISOR_STATUS = Path(r"C:\Trading\ANT_OUT\colony_supervisor_status_lite.json")
+RECOVERY_STATUS = Path(r"C:\Trading\ANT_OUT\colony_supervisor_status_lite.json")
+PRIMARY_DASHBOARD_PATH = Path(r"C:\Trading\ANT_OUT\combined_colony_status.tsv")
+FALLBACK_DASHBOARD_PATH = Path(r"C:\Trading\ANT_OUT\colony_status.tsv")
+SELECTION_PATH = Path(r"C:\Trading\ANT_OUT\worker_strategy_selection.json")
+EXECUTION_PATH = Path(r"C:\Trading\ANT_OUT\worker_execution_plan.json")
+REGISTRY_PATH = Path(__file__).resolve().parents[1] / "worker_registry.json"
+MARKET_STATUS_MAX_AGE_SECONDS = 300
+RECOVERY_STATUS_MAX_AGE_SECONDS = 300
+
+
+def read_json(path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def read_tsv(path):
+    if not path.exists():
+        return []
+
+    text = path.read_text(encoding="utf-8-sig")
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return []
+
+    headers = [h.strip() for h in lines[0].split("\t")]
+    rows = []
+
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split("\t")]
+        row = dict(zip(headers, parts))
+        rows.append(row)
+
+    return rows
+
+
+def normalize_markets_block(doc):
+    markets = doc.get("markets", {}) or {}
+
+    if isinstance(markets, dict):
+        return {str(k): v for k, v in markets.items() if isinstance(v, dict)}
+
+    out = {}
+    if isinstance(markets, list):
+        for row in markets:
+            if not isinstance(row, dict):
+                continue
+            market = str(row.get("market", "") or "")
+            if not market:
+                continue
+            out[market] = row
+    return out
+
+
+def load_worker_registry():
+    doc = read_json(REGISTRY_PATH)
+    strategies = doc.get("strategies", {}) or {}
+    out = {}
+
+    for k, v in strategies.items():
+        key = str(k or "").upper()
+        if not key or not isinstance(v, dict):
+            continue
+        out[key] = v
+
+    if "NONE" not in out:
+        out["NONE"] = {
+            "family": "NONE",
+            "class": "INACTIVE",
+            "priority": 0,
+            "capital_bucket": "INACTIVE",
+            "cooldown_policy": "NONE",
+        }
+
+    return out
+
+
+def parse_iso_z(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def calc_age_seconds(ts_value):
+    ts_dt = parse_iso_z(ts_value)
+    if ts_dt is None:
+        return -1
+    return int((datetime.now(timezone.utc) - ts_dt).total_seconds())
+
+
+def print_header(title):
+    print("")
+    print("=" * 80)
+    print(title)
+    print("=" * 80)
+    print("")
+
+
+def pad(v, w):
+    s = str(v)
+    return s[:w].ljust(w)
+
+
+def print_supervisor_summary():
+    s = read_json(SUPERVISOR_STATUS)
+    r = read_json(RECOVERY_STATUS)
+
+    recovery_ts = str(r.get("ts_utc", "") or "")
+    recovery_age_seconds = calc_age_seconds(recovery_ts)
+    recovery_is_stale = (recovery_age_seconds < 0) or (recovery_age_seconds > RECOVERY_STATUS_MAX_AGE_SECONDS)
+
+    if recovery_ts and not recovery_is_stale:
+        recent_recovery_action = str(r.get("recent_recovery_action", "") or r.get("recovery_decision", "") or "")
+    else:
+        recent_recovery_action = ""
+
+    print_header("COLONY SUPERVISOR")
+
+    print(f"state                : {s.get('supervisor_state','')}")
+    print(f"reason               : {s.get('supervisor_reason','')}")
+
+    w = read_json(Path(r"C:\Trading\ANT_OUT\colony_watchdog_check_lite.json"))
+
+    print("")
+    print("watchdog")
+    print("--------")
+
+    print(f"recent_watchdog_action    : {s.get('recent_watchdog_action','')}")
+    print(f"watchdog_state            : {s.get('watchdog_state','')}")
+    print(f"watchdog_runtime_state    : {s.get('watchdog_runtime_state','')}")
+    print(f"watchdog_recovery_trigger : {w.get('recovery_triggered','')}")
+    print(f"watchdog_recovery_reason  : {w.get('recovery_trigger_reason','')}")
+
+    print("")
+    print("locks")
+    print("-----")
+
+    print(f"recent_lock_event      : {s.get('recent_lock_event','')}")
+    print(f"loop_runtime_state     : {s.get('loop_runtime_state','')}")
+    print(f"loop_age_seconds       : {s.get('loop_age_seconds','')}")
+
+    print("")
+    print("recovery")
+    print("--------")
+
+    print(f"recovery_ts            : {recovery_ts}")
+    print(f"recovery_age_seconds   : {recovery_age_seconds}")
+    print(f"recovery_is_stale      : {recovery_is_stale}")
+    print(f"recent_recovery_action : {recent_recovery_action}")
+    print(f"recovery_decision      : {r.get('recovery_decision','')}")
+    print(f"recovery_attempted     : {r.get('recovery_attempted','')}")
+    print(f"recovery_action_rc     : {r.get('recovery_action_rc','')}")
+
+    print("")
+    print("recovery cooldown")
+    print("-----------------")
+    print(f"recovery_decision_reason : {r.get('recovery_decision_reason','')}")
+    print(f"previous_recovery_age_s  : {r.get('previous_recovery_age_s','')}")
+    print(f"recovery_cooldown_s      : {r.get('recovery_cooldown_s','')}")
+    print(f"cooldown_active          : {r.get('cooldown_active','')}")
+
+
+def load_market_rows():
+    primary_rows = read_tsv(PRIMARY_DASHBOARD_PATH)
+    if primary_rows:
+        return primary_rows, str(PRIMARY_DASHBOARD_PATH), "PRIMARY"
+
+    fallback_rows = read_tsv(FALLBACK_DASHBOARD_PATH)
+    if fallback_rows:
+        return fallback_rows, str(FALLBACK_DASHBOARD_PATH), "FALLBACK"
+
+    return [], "", "MISSING"
+
+
+def print_colony_table():
+    rows, source_path, source_kind = load_market_rows()
+
+    print_header("COLONY MARKETS")
+
+    if not rows:
+        print("market_snapshot_source : MISSING")
+        print("market_snapshot_state  : MISSING")
+        print("market_snapshot_reason : NO_COLONY_STATUS_ROWS")
+        print("")
+        print("no colony status rows")
+        return
+
+    latest_ts = str(rows[0].get("ts_utc", "") or "")
+    snapshot_age_seconds = calc_age_seconds(latest_ts)
+    snapshot_is_stale = (snapshot_age_seconds < 0) or (snapshot_age_seconds > MARKET_STATUS_MAX_AGE_SECONDS)
+    snapshot_state = "STALE" if snapshot_is_stale else "FRESH"
+    snapshot_reason = "MARKET_STATUS_STALE" if snapshot_is_stale else "MARKET_STATUS_FRESH"
+
+    print(f"market_snapshot_source : {source_kind}")
+    print(f"market_snapshot_path   : {source_path}")
+    print(f"market_snapshot_state  : {snapshot_state}")
+    print(f"market_snapshot_reason : {snapshot_reason}")
+    print(f"market_snapshot_ts     : {latest_ts}")
+    print(f"market_snapshot_age_s  : {snapshot_age_seconds}")
+    print("")
+
+    if snapshot_is_stale:
+        print("stale market snapshot detected")
+        print("market rows suppressed")
+        return
+
+    headers = list(rows[0].keys())
+    print(" ".join(h.ljust(12) for h in headers))
+
+    for r in rows:
+        print(" ".join(str(r.get(h, "")).ljust(12) for h in headers))
+
+
+def print_strategy_ops_table():
+    selection_doc = read_json(SELECTION_PATH)
+    execution_doc = read_json(EXECUTION_PATH)
+    registry = load_worker_registry()
+
+    selection_markets = normalize_markets_block(selection_doc)
+    execution_markets = normalize_markets_block(execution_doc)
+    all_markets = sorted(set(selection_markets.keys()) | set(execution_markets.keys()))
+
+    print_header("COLONY STRATEGY OPS")
+
+    if not all_markets:
+        print("strategy_ops_state : MISSING")
+        print("strategy_ops_reason: NO_SELECTION_OR_EXECUTION_ROWS")
+        return
+
+    headers = [
+        ("market", 10),
+        ("strategy", 8),
+        ("family", 8),
+        ("class", 16),
+        ("prio", 5),
+        ("bucket", 10),
+        ("cooldown", 10),
+        ("sel_bias", 8),
+        ("sel_size", 8),
+        ("exec_mode", 16),
+        ("exec_bias", 9),
+        ("exec_size", 9),
+    ]
+
+    print(" ".join(pad(h, w) for h, w in headers))
+    print(" ".join("-" * w for _, w in headers))
+
+    for market in all_markets:
+        srow = selection_markets.get(market, {}) or {}
+        erow = execution_markets.get(market, {}) or {}
+
+        strategy = str(srow.get("selected_strategy", erow.get("selected_strategy", "NONE")) or "NONE").upper()
+        meta = registry.get(strategy) or registry.get("NONE") or {}
+
+        values = [
+            market,
+            strategy,
+            srow.get("strategy_family", erow.get("strategy_family", "")),
+            srow.get("strategy_class", erow.get("strategy_class", "")),
+            srow.get("strategy_priority", erow.get("strategy_priority", "")),
+            meta.get("capital_bucket", ""),
+            meta.get("cooldown_policy", ""),
+            srow.get("selected_bias", ""),
+            srow.get("selected_size_mult", ""),
+            erow.get("execution_mode", ""),
+            erow.get("execution_bias", ""),
+            erow.get("execution_size_mult", ""),
+        ]
+
+        print(" ".join(pad(v, w) for v, (_, w) in zip(values, headers)))
+
+    print("")
+
+
+def main():
+    print("")
+    print("UNIFIED ANT COLONY OPS PANEL")
+    print("version:", VERSION)
+
+    print_supervisor_summary()
+    print_colony_table()
+    print_strategy_ops_table()
+
+
+if __name__ == "__main__":
+    main()

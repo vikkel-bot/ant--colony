@@ -1,0 +1,27 @@
+﻿=== 2026-03-02T16:26:54Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:26:54.258056+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:04Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:04.932367+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:07Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:07.690771+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:37Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:37.537584+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:40Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:40.505620+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:30Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:30.554134+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:33Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:33.191967+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:48Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:48.373437+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:51Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\SOL-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:51.164591+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+

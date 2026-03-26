@@ -1,18 +1,18 @@
 {
-  "ts_utc": "2026-03-02T14:38:13.989774+00:00",
+  "ts_utc": "2026-03-04T16:40:35.289217+00:00",
   "cb20_market": "BTC-EUR",
   "cb20_interval": "4h",
   "cb20_trend": "BEAR",
   "cb20_vol": "MID",
   "cb20_gate": "ALLOW",
   "cb20_size_mult": 1.0,
-  "edge3_health_gate": "ALLOW",
-  "edge3_health_size_mult": 1.0,
-  "edge3_health_reason": "EDGE3_OK",
-  "edge3_combined_gate": "ALLOW",
-  "edge3_combined_size_mult": 1.0,
+  "edge3_health_gate": "BLOCK",
+  "edge3_health_size_mult": 0.0,
+  "edge3_health_reason": "EDGE3_STATUS_EDGE3_FATAL",
+  "edge3_combined_gate": "BLOCK",
+  "edge3_combined_size_mult": 0.0,
   "edge3_base_pf": 0.5,
-  "edge3_effective_pf": 0.5,
-  "edge3_start_iso": "2024-03-02T14:38:13Z",
-  "edge3_end_iso": "2026-03-02T14:38:13Z"
+  "edge3_effective_pf": 0.0,
+  "edge3_start_iso": "2024-03-04T16:40:35Z",
+  "edge3_end_iso": "2026-03-04T16:40:35Z"
 }

@@ -1,0 +1,40 @@
+worker_position_sizing_lite.py
+
+INPUT FILES
+- C:\Trading\ANT_OUT\alloc_targets_combined.json
+- C:\Trading\ANT_OUT\worker_execution_simulator.json
+- C:\Trading\ANT_OUT\worker_portfolio_state.json
+- C:\Trading\ANT_OUT\worker_market_price_feed.json
+
+OUTPUT FILES
+- C:\Trading\ANT_OUT\worker_position_sizing.json
+- C:\Trading\ANT_OUT\worker_position_sizing.tsv
+
+PER MARKET OUTPUT FIELDS
+- sizing_enabled
+- sizing_strategy
+- sizing_bias
+- input_size_mult
+- asset_class
+- profile_base_pf
+- profile_max_pf
+- equity_eur
+- market_price
+- target_notional_eur
+- max_notional_eur
+- target_qty
+- sizing_state
+- sizing_reason
+
+CORE RULE
+target_notional_eur = min(equity_eur * profile_base_pf * input_size_mult, equity_eur * profile_max_pf)
+
+QTY RULE
+target_qty = target_notional_eur / market_price
+
+DISABLE RULES
+- if sim_enabled = false => sizing disabled
+- if gate = BLOCK => sizing disabled
+- if input_size_mult <= 0 => sizing disabled
+- if market_price <= 0 => sizing disabled
+- if equity_eur <= 0 => sizing disabled

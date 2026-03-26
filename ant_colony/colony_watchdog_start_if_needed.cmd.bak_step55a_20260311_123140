@@ -1,0 +1,51 @@
+@echo off
+setlocal
+
+cd /d C:\Users\vikke\OneDrive\bitvavo-bot_clean
+
+set PYEXE=C:\Users\vikke\OneDrive\bitvavo-bot_clean\.venv\Scripts\python.exe
+set CHECK_SCRIPT=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_watchdog_check_lite.py
+set START_SCRIPT=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_start_loop.cmd
+set MAX_AGE_SECONDS=120
+set CHECK_JSON=C:\Trading\ANT_OUT\colony_watchdog_check_lite.json
+set OUT_JSON=C:\Trading\ANT_OUT\colony_watchdog_start_if_needed.json
+
+if not exist "%PYEXE%" (
+  echo ERROR: python not found: %PYEXE%
+  exit /b 1
+)
+
+if not exist "%CHECK_SCRIPT%" (
+  echo ERROR: watchdog script not found: %CHECK_SCRIPT%
+  exit /b 1
+)
+
+if not exist "%START_SCRIPT%" (
+  echo ERROR: start script not found: %START_SCRIPT%
+  exit /b 1
+)
+
+echo RUNNING_COLONY_WATCHDOG_START_IF_NEEDED
+echo PYEXE=%PYEXE%
+echo CHECK_SCRIPT=%CHECK_SCRIPT%
+echo START_SCRIPT=%START_SCRIPT%
+echo MAX_AGE_SECONDS=%MAX_AGE_SECONDS%
+
+"%PYEXE%" "%CHECK_SCRIPT%" %MAX_AGE_SECONDS%
+set CHECK_RC=%ERRORLEVEL%
+
+if "%CHECK_RC%"=="0" (
+  echo WATCHDOG_RESULT=ENGINE_ALREADY_RUNNING_OK
+  set ACTION=NO_START
+  set RESULT=ENGINE_ALREADY_RUNNING_OK
+) else (
+  echo WATCHDOG_RESULT=ENGINE_NOT_RUNNING_OR_STALE
+  echo STARTING_COLONY_LOOP_IN_NEW_WINDOW
+  start "COLONY_LOOP" cmd /k C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\colony_start_loop.cmd
+  set ACTION=START_LOOP
+  set RESULT=ENGINE_NOT_RUNNING_OR_STALE
+)
+
+"%PYEXE%" -c "import json, pathlib; check_path=pathlib.Path(r'%CHECK_JSON%'); out_path=pathlib.Path(r'%OUT_JSON%'); check=json.loads(check_path.read_text(encoding='utf-8')); data={'component':'colony_watchdog_start_if_needed','ts_utc':check.get('ts_utc',''),'check_rc':int(r'%CHECK_RC%'),'max_age_seconds':int(r'%MAX_AGE_SECONDS%'),'action':r'%ACTION%','result':r'%RESULT%','watchdog_state':check.get('watchdog_state',''),'runtime_state':check.get('runtime_state',''),'last_known_runtime_state':check.get('last_known_runtime_state',''),'heartbeat_pid':str(check.get('heartbeat_pid','')),'heartbeat_cycle_no':int(check.get('heartbeat_cycle_no',0) or 0),'heartbeat_age_seconds':int(check.get('heartbeat_age_seconds',-1) or -1)}; out_path.write_text(json.dumps(data, indent=2), encoding='utf-8')"
+
+exit /b 0

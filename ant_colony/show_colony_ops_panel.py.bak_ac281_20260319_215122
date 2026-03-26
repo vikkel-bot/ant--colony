@@ -1,0 +1,163 @@
+import os
+import json
+import glob
+
+ANT_OUT = r"C:\Trading\ANT_OUT"
+
+COLONY_STATUS_PATH = os.path.join(ANT_OUT, "combined_colony_status.json")
+EXEC_SUMMARY_PATH = os.path.join(ANT_OUT, "execution_summary.json")
+PAPER_METRICS_PATH = os.path.join(ANT_OUT, "paper_execution_metrics.json")
+PAPER_SUMMARY_PATH = os.path.join(ANT_OUT, "paper_execution_summary.json")
+MARKET_DATA_PATH = os.path.join(ANT_OUT, "worker_market_data.json")
+INTENT_GLOB = os.path.join(ANT_OUT, "*_execution_intent.json")
+
+
+def load_json(path):
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def show_header(title):
+    print("")
+    print(title)
+    print("=" * 80)
+
+
+def show_block(title):
+    print("")
+    print(title)
+    print("-" * 80)
+
+
+def build_execution_readiness_summary(colony_status):
+    markets = colony_status.get("markets", {})
+    allowed = 0
+    blocked = 0
+    blocked_reasons = {}
+
+    for _, market_data in markets.items():
+        readiness = market_data.get("execution_readiness", {})
+        is_allowed = bool(readiness.get("allowed", False))
+        reason = str(readiness.get("reason", "UNKNOWN") or "UNKNOWN")
+
+        if is_allowed:
+            allowed += 1
+        else:
+            blocked += 1
+            blocked_reasons[reason] = blocked_reasons.get(reason, 0) + 1
+
+    return {
+        "markets_allowed": allowed,
+        "markets_blocked": blocked,
+        "blocked_reasons": blocked_reasons
+    }
+
+
+def format_reason_counts(reason_counts):
+    if not reason_counts:
+        return ""
+    parts = []
+    for k, v in sorted(reason_counts.items()):
+        parts.append(f"{k}={v}")
+    return ", ".join(parts)
+
+
+def load_intents():
+    rows = []
+    for path in sorted(glob.glob(INTENT_GLOB)):
+        obj = load_json(path)
+        if not obj:
+            continue
+        rows.append({
+            "market": obj.get("market", ""),
+            "action": obj.get("action", ""),
+            "execution_allowed": bool(obj.get("execution_allowed", False)),
+            "block_reason": obj.get("block_reason", "")
+        })
+    return rows
+
+
+def build_market_data_summary(market_data):
+    markets = market_data.get("markets", {})
+    zero_price_count = 0
+
+    for _, info in markets.items():
+        price = info.get("last_price", 0)
+        try:
+            price_val = float(price)
+        except Exception:
+            price_val = 0.0
+        if price_val == 0.0:
+            zero_price_count += 1
+
+    return {
+        "component": market_data.get("component"),
+        "ts_utc": market_data.get("ts_utc"),
+        "market_count": len(markets),
+        "zero_price_count": zero_price_count
+    }
+
+
+def main():
+    colony_status = load_json(COLONY_STATUS_PATH)
+    exec_summary = load_json(EXEC_SUMMARY_PATH)
+    paper_metrics = load_json(PAPER_METRICS_PATH)
+    paper_summary = load_json(PAPER_SUMMARY_PATH)
+    market_data = load_json(MARKET_DATA_PATH)
+    intents = load_intents()
+
+    freshness = colony_status.get("freshness", {})
+    readiness_summary = build_execution_readiness_summary(colony_status)
+    market_data_summary = build_market_data_summary(market_data)
+
+    freshness_ok = colony_status.get("freshness_ok")
+    if freshness_ok is None:
+        freshness_ok = freshness.get("freshness_ok")
+
+    show_header("UNIFIED ANT COLONY DASHBOARD")
+
+    show_block("COLONY STATUS")
+    print("cycle_id :", colony_status.get("cycle_id"))
+    print("freshness_ok :", freshness_ok)
+    print("markets_allowed :", readiness_summary.get("markets_allowed", 0))
+    print("markets_blocked :", readiness_summary.get("markets_blocked", 0))
+    print("blocked_reasons :", format_reason_counts(readiness_summary.get("blocked_reasons", {})))
+
+    show_block("MARKET DATA STATUS")
+    print("component :", market_data_summary.get("component"))
+    print("ts_utc :", market_data_summary.get("ts_utc"))
+    print("market_count :", market_data_summary.get("market_count", 0))
+    print("zero_price_count :", market_data_summary.get("zero_price_count", 0))
+
+    show_block("EXECUTION SUMMARY")
+    print("allowed_count :", exec_summary.get("allowed_count"))
+    print("blocked_count :", exec_summary.get("blocked_count"))
+
+    show_block("PAPER EXECUTION METRICS")
+    print("equity :", paper_metrics.get("equity", 0))
+    print("cash :", paper_metrics.get("cash", 0))
+    print("position_count :", paper_metrics.get("position_count", 0))
+    print("markets :", ", ".join(paper_metrics.get("markets", [])))
+
+    show_block("PAPER EXECUTION SUMMARY")
+    print("intents_processed :", paper_summary.get("intents_processed", 0))
+    print("intents_allowed :", paper_summary.get("intents_allowed", 0))
+    print("intents_skipped :", paper_summary.get("intents_skipped", 0))
+    print("log_file_exists :", paper_summary.get("log_file_exists", False))
+    print("executed_ids_count :", paper_summary.get("executed_ids_count", 0))
+    print("position_count :", paper_summary.get("position_count", 0))
+
+    show_block("PER-MARKET EXECUTION INTENTS")
+    print(f"{'market':<10} {'action':<12} {'allowed':<8} block_reason")
+    print(f"{'-'*10} {'-'*12} {'-'*8} {'-'*40}")
+    for row in intents:
+        print(f"{row['market']:<10} {row['action']:<12} {str(row['execution_allowed']):<8} {row['block_reason']}")
+
+    print("")
+
+
+if __name__ == "__main__":
+    main()

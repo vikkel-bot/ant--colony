@@ -1,0 +1,231 @@
+﻿import json
+import os
+
+ANT_OUT = r"C:\Trading\ANT_OUT"
+
+COMBINED_PATH = os.path.join(ANT_OUT, "combined_colony_status.json")
+MARKET_DATA_PATH = os.path.join(ANT_OUT, "worker_market_data.json")
+EXECUTION_SUMMARY_PATH = os.path.join(ANT_OUT, "execution_summary.json")
+PAPER_EXECUTION_METRICS_PATH = os.path.join(ANT_OUT, "paper_execution_metrics.json")
+PAPER_EXECUTION_SUMMARY_PATH = os.path.join(ANT_OUT, "paper_execution_summary.json")
+PORTFOLIO_SUMMARY_PATH = os.path.join(ANT_OUT, "paper_portfolio_summary.json")
+
+
+def load_json(path, default=None):
+    if not os.path.exists(path):
+        return {} if default is None else default
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return {} if default is None else default
+
+
+def h1(text):
+    print("=" * 80)
+    print(text)
+    print("=" * 80)
+    print()
+
+
+def h2(text):
+    print(text)
+    print("-" * 80)
+
+
+def fmt(v):
+    if v is None:
+        return "-"
+    return str(v)
+
+
+def safe_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def safe_list(value):
+    return value if isinstance(value, list) else []
+
+
+def pick(dct, *keys, default=None):
+    if not isinstance(dct, dict):
+        return default
+    for key in keys:
+        if key in dct and dct.get(key) is not None:
+            return dct.get(key)
+    return default
+
+
+def summarize_blocked_reasons(markets):
+    counts = {}
+    for market, row in safe_dict(markets).items():
+        row = safe_dict(row)
+        reason = pick(
+            row,
+            "execution_block_reason",
+            "block_reason",
+            "reason",
+            default=None
+        )
+        if reason in (None, "", "NONE", "ALLOW", "OK"):
+            continue
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def resolve_market_row_values(row):
+    row = safe_dict(row)
+
+    action = pick(
+        row,
+        "execution_action",
+        "action",
+        default="NO_ACTION"
+    )
+
+    allowed = pick(
+        row,
+        "execution_allowed",
+        "allowed",
+        default=False
+    )
+
+    block_reason = pick(
+        row,
+        "execution_block_reason",
+        "block_reason",
+        "reason",
+        default="-"
+    )
+
+    return action, allowed, block_reason
+
+
+def main():
+    combined = load_json(COMBINED_PATH, {})
+    market_data = load_json(MARKET_DATA_PATH, {})
+    execution_summary = load_json(EXECUTION_SUMMARY_PATH, {})
+    paper_metrics = load_json(PAPER_EXECUTION_METRICS_PATH, {})
+    paper_summary = load_json(PAPER_EXECUTION_SUMMARY_PATH, {})
+    portfolio_summary = load_json(PORTFOLIO_SUMMARY_PATH, {})
+
+    combined_markets = safe_dict(pick(combined, "markets", default={}))
+    market_count = len(combined_markets)
+
+    freshness_ok = pick(combined, "freshness_ok", "probe_fresh", default="-")
+    cycle_id = pick(combined, "cycle_id", "ts_utc", "ts", default="-")
+
+    markets_allowed = pick(combined, "markets_allowed", default=None)
+    markets_blocked = pick(combined, "markets_blocked", default=None)
+    blocked_reasons = pick(combined, "blocked_reasons", default=None)
+
+    if markets_allowed is None:
+        markets_allowed = sum(
+            1 for _, row in combined_markets.items()
+            if bool(pick(safe_dict(row), "execution_allowed", "allowed", default=False))
+        )
+
+    if markets_blocked is None:
+        markets_blocked = max(0, market_count - markets_allowed)
+
+    if not isinstance(blocked_reasons, dict) or not blocked_reasons:
+        blocked_reasons = summarize_blocked_reasons(combined_markets)
+
+    h1("UNIFIED ANT COLONY DASHBOARD")
+
+    h2("COLONY STATUS")
+    print(f"cycle_id : {fmt(cycle_id)}")
+    print(f"freshness_ok : {fmt(freshness_ok)}")
+    print(f"markets_allowed : {fmt(markets_allowed)}")
+    print(f"markets_blocked : {fmt(markets_blocked)}")
+
+    if blocked_reasons:
+        blocked_text = ", ".join(f"{k}={v}" for k, v in blocked_reasons.items())
+    else:
+        blocked_text = "-"
+    print(f"blocked_reasons : {blocked_text}")
+    print()
+
+    h2("MARKET DATA STATUS")
+    md_market_count = pick(market_data, "market_count", default=None)
+    if md_market_count is None:
+        md_market_count = len(safe_dict(pick(market_data, "markets", default={})))
+
+    zero_price_count = pick(market_data, "zero_price_count", default=None)
+    if zero_price_count is None:
+        zero_price_count = sum(
+            1
+            for _, row in safe_dict(pick(market_data, "markets", default={})).items()
+            if float(safe_dict(row).get("last_price", 0.0) or 0.0) <= 0.0
+        )
+
+    print(f"component : {fmt(pick(market_data, 'component', default='-'))}")
+    print(f"ts_utc : {fmt(pick(market_data, 'ts_utc', 'ts', default='-'))}")
+    print(f"market_count : {fmt(md_market_count)}")
+    print(f"zero_price_count : {fmt(zero_price_count)}")
+    print()
+
+    h2("EXECUTION SUMMARY")
+    allowed_count = pick(execution_summary, "allowed_count", default=None)
+    blocked_count = pick(execution_summary, "blocked_count", default=None)
+
+    if allowed_count is None:
+        allowed_count = markets_allowed
+    if blocked_count is None:
+        blocked_count = markets_blocked
+
+    print(f"allowed_count : {fmt(allowed_count)}")
+    print(f"blocked_count : {fmt(blocked_count)}")
+    print()
+
+    h2("PAPER EXECUTION METRICS")
+    print(f"equity : {fmt(pick(paper_metrics, 'equity', default='-'))}")
+    print(f"cash : {fmt(pick(paper_metrics, 'cash', default='-'))}")
+    print(f"position_count : {fmt(pick(paper_metrics, 'position_count', default='-'))}")
+
+    markets = pick(paper_metrics, "markets", default=[])
+    if isinstance(markets, list):
+        markets_text = ", ".join(str(x) for x in markets) if markets else "-"
+    else:
+        markets_text = fmt(markets)
+    print(f"markets : {markets_text}")
+    print()
+
+    h2("PAPER PORTFOLIO VALUATION")
+    print(f"valuation_state : {fmt(pick(portfolio_summary, 'valuation_state', 'state', default='-'))}")
+    print(f"equity : {fmt(pick(portfolio_summary, 'equity', default='-'))}")
+    print(f"cash : {fmt(pick(portfolio_summary, 'cash', default='-'))}")
+    print(f"positions_market_value : {fmt(pick(portfolio_summary, 'positions_market_value', default='-'))}")
+    print(f"unrealized_pnl : {fmt(pick(portfolio_summary, 'unrealized_pnl', default='-'))}")
+    print(f"open_positions : {fmt(pick(portfolio_summary, 'open_positions', default='-'))}")
+    print(f"priced_positions : {fmt(pick(portfolio_summary, 'priced_positions', default='-'))}")
+    print(f"unpriced_positions : {fmt(pick(portfolio_summary, 'unpriced_positions', default='-'))}")
+    print(f"fresh_positions : {fmt(pick(portfolio_summary, 'fresh_positions', default='-'))}")
+    print(f"stale_positions : {fmt(pick(portfolio_summary, 'stale_positions', default='-'))}")
+    print(f"all_prices_fresh : {fmt(pick(portfolio_summary, 'all_prices_fresh', default='-'))}")
+    print(f"max_price_age_seconds : {fmt(pick(portfolio_summary, 'max_price_age_seconds', default='-'))}")
+    print(f"equity_calc_mode : {fmt(pick(portfolio_summary, 'equity_calc_mode', default='-'))}")
+    print()
+
+    h2("PAPER EXECUTION SUMMARY")
+    print(f"intents_processed : {fmt(pick(paper_summary, 'intents_processed', default='-'))}")
+    print(f"intents_allowed : {fmt(pick(paper_summary, 'intents_allowed', default='-'))}")
+    print(f"intents_skipped : {fmt(pick(paper_summary, 'intents_skipped', default='-'))}")
+    print(f"log_file_exists : {fmt(pick(paper_summary, 'log_file_exists', default='-'))}")
+    print(f"executed_ids_count : {fmt(pick(paper_summary, 'executed_ids_count', default='-'))}")
+    print(f"position_count : {fmt(pick(paper_summary, 'position_count', default='-'))}")
+    print()
+
+    h2("PER-MARKET EXECUTION INTENTS")
+    print(f"{'market':10} {'action':12} {'allowed':8} {'block_reason'}")
+    print(f"{'-'*10} {'-'*12} {'-'*8} {'-'*40}")
+
+    for market in sorted(combined_markets.keys()):
+        action, allowed, block_reason = resolve_market_row_values(combined_markets.get(market, {}))
+        print(f"{market:10} {str(action):12} {str(allowed):8} {str(block_reason)}")
+
+    print()
+
+
+if __name__ == "__main__":
+    main()

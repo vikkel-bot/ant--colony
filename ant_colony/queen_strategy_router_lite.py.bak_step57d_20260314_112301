@@ -1,0 +1,202 @@
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+COMBINED_STATUS_PATH = OUT_DIR / "combined_colony_status.json"
+INTEL_PATH = OUT_DIR / "colony_signal_mix.json"
+OUT_JSON = OUT_DIR / "queen_strategy_router.json"
+OUT_TSV = OUT_DIR / "queen_strategy_router.tsv"
+
+
+def now_utc_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def load_json(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def strategy_meta(strategy: str):
+    s = str(strategy or "NONE").upper()
+
+    if s == "EDGE3":
+        return {
+            "strategy_family": "WORKER",
+            "strategy_class": "MEAN_REVERSION",
+            "strategy_priority": 200,
+        }
+
+    if s == "EDGE4":
+        return {
+            "strategy_family": "HUNTER",
+            "strategy_class": "BREAKOUT",
+            "strategy_priority": 300,
+        }
+
+    return {
+        "strategy_family": "NONE",
+        "strategy_class": "INACTIVE",
+        "strategy_priority": 0,
+    }
+
+
+def choose_route(trend, edge3_gate, edge4_state, edge4_bias, colony_bias, colony_conf):
+    trend = str(trend or "").upper()
+    edge3_gate = str(edge3_gate or "").upper()
+    edge4_state = str(edge4_state or "").lower()
+    edge4_bias = str(edge4_bias or "").upper()
+    colony_bias = str(colony_bias or "").upper()
+
+    edge4_active = edge4_state == "ok" and edge4_bias in ("LONG", "SHORT")
+
+    if trend == "SIDEWAYS" and edge4_active:
+        chosen = {
+            "active_strategy": "EDGE4",
+            "strategy_bias": edge4_bias,
+            "strategy_conf": float(colony_conf),
+            "route_reason": "SIDEWAYS_EDGE4_PRIORITY",
+        }
+        chosen.update(strategy_meta(chosen["active_strategy"]))
+        return chosen
+
+    if edge3_gate == "ALLOW" and colony_bias in ("LONG", "SHORT"):
+        chosen = {
+            "active_strategy": "EDGE3",
+            "strategy_bias": colony_bias,
+            "strategy_conf": float(colony_conf),
+            "route_reason": "EDGE3_PRIORITY",
+        }
+        chosen.update(strategy_meta(chosen["active_strategy"]))
+        return chosen
+
+    if edge4_active:
+        chosen = {
+            "active_strategy": "EDGE4",
+            "strategy_bias": edge4_bias,
+            "strategy_conf": float(colony_conf),
+            "route_reason": "EDGE4_FALLBACK",
+        }
+        chosen.update(strategy_meta(chosen["active_strategy"]))
+        return chosen
+
+    chosen = {
+        "active_strategy": "NONE",
+        "strategy_bias": "NEUTRAL",
+        "strategy_conf": float(colony_conf),
+        "route_reason": "COLONY_NEUTRAL",
+    }
+    chosen.update(strategy_meta(chosen["active_strategy"]))
+    return chosen
+
+
+combined_doc = load_json(COMBINED_STATUS_PATH)
+intel_doc = load_json(INTEL_PATH)
+
+combined_markets_raw = combined_doc.get("markets", {}) or {}
+intel_markets_raw = intel_doc.get("markets", []) or []
+
+combined_items = []
+if isinstance(combined_markets_raw, dict):
+    for market, row in combined_markets_raw.items():
+        if isinstance(row, dict):
+            combined_items.append((str(market), row))
+elif isinstance(combined_markets_raw, list):
+    for row in combined_markets_raw:
+        if isinstance(row, dict):
+            market = str(row.get("market", "") or "")
+            if market:
+                combined_items.append((market, row))
+
+intel_by_market = {}
+if isinstance(intel_markets_raw, dict):
+    for market, row in intel_markets_raw.items():
+        if isinstance(row, dict):
+            intel_by_market[str(market)] = row
+elif isinstance(intel_markets_raw, list):
+    for row in intel_markets_raw:
+        if isinstance(row, dict):
+            market = str(row.get("market", "") or "")
+            if market:
+                intel_by_market[market] = row
+
+rows = []
+
+for market, dash_row in combined_items:
+    if not isinstance(dash_row, dict):
+        continue
+
+    intel_row = intel_by_market.get(market, {}) or {}
+    edge3_row = dash_row.get("edge3", {}) or {}
+    edge4_row = dash_row.get("edge4", {}) or {}
+
+    trend = edge3_row.get("cb20_trend", "")
+    edge3_gate = edge3_row.get("gate", "")
+    edge4_state = edge4_row.get("state", "")
+    edge4_bias = intel_row.get("edge4_bias", "")
+    colony_bias = intel_row.get("colony_bias", "")
+    colony_conf = float(intel_row.get("colony_confidence", intel_row.get("colony_conf", 0.0)) or 0.0)
+
+    route = choose_route(
+        trend=trend,
+        edge3_gate=edge3_gate,
+        edge4_state=edge4_state,
+        edge4_bias=edge4_bias,
+        colony_bias=colony_bias,
+        colony_conf=colony_conf,
+    )
+
+    row = {
+        "market": market,
+        "active_strategy": route["active_strategy"],
+        "selected_strategy": route["active_strategy"],
+        "strategy_family": route["strategy_family"],
+        "strategy_class": route["strategy_class"],
+        "strategy_priority": route["strategy_priority"],
+        "strategy_bias": route["strategy_bias"],
+        "strategy_conf": route["strategy_conf"],
+        "route_reason": route["route_reason"],
+
+        "trend": str(trend or ""),
+        "edge3_gate": str(edge3_gate or ""),
+        "edge4_state": str(edge4_state or ""),
+        "edge4_bias": str(edge4_bias or ""),
+        "colony_bias": str(colony_bias or ""),
+        "colony_conf": colony_conf,
+
+        "final_bias": route["strategy_bias"],
+        "final_size_mult": 1.0 if route["active_strategy"] != "NONE" else 0.0,
+        "ts_utc": now_utc_iso(),
+    }
+    rows.append(row)
+
+result = {
+    "version": "queen_strategy_router_lite_v2",
+    "ts_utc": now_utc_iso(),
+    "markets": rows,
+}
+
+OUT_JSON.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+with OUT_TSV.open("w", encoding="utf-8") as f:
+    f.write(
+        "market\tactive_strategy\tselected_strategy\tstrategy_family\tstrategy_class\tstrategy_priority\tstrategy_bias\tstrategy_conf\troute_reason\ttrend\tedge3_gate\tedge4_state\tedge4_bias\tcolony_bias\tcolony_conf\tfinal_bias\tfinal_size_mult\n"
+    )
+    for row in rows:
+        f.write(
+            f'{row["market"]}\t{row["active_strategy"]}\t{row["selected_strategy"]}\t{row["strategy_family"]}\t{row["strategy_class"]}\t{row["strategy_priority"]}\t{row["strategy_bias"]}\t{row["strategy_conf"]}\t{row["route_reason"]}\t{row["trend"]}\t{row["edge3_gate"]}\t{row["edge4_state"]}\t{row["edge4_bias"]}\t{row["colony_bias"]}\t{row["colony_conf"]}\t{row["final_bias"]}\t{row["final_size_mult"]}\n'
+        )
+
+print(json.dumps({
+    "ok": True,
+    "output_json": str(OUT_JSON),
+    "output_tsv": str(OUT_TSV),
+    "markets": len(rows),
+    "version": result["version"],
+}, indent=2))

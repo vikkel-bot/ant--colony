@@ -1,0 +1,186 @@
+﻿from __future__ import annotations
+import os, json, glob
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+REPORTS_DIR = os.path.join(ROOT, "reports")
+DATA_CACHE_DIR = os.path.join(ROOT, "data_cache")
+
+def now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _safe_float(x, default=0.0) -> float:
+    try: return float(x)
+    except Exception: return default
+
+def _safe_int(x, default=0) -> int:
+    try: return int(x)
+    except Exception: return default
+
+def load_candles_from_cache(path: str) -> List[Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "candles" in data:
+        return data["candles"] or []
+    if isinstance(data, list):
+        return data
+    return []
+
+def pick_best_cache(market: str, interval: str) -> Optional[str]:
+    pats = [
+        os.path.join(DATA_CACHE_DIR, f"{market}_{interval}_*.json"),
+        os.path.join(DATA_CACHE_DIR, f"{market}_{interval}_*.JSON"),
+    ]
+    files: List[str] = []
+    for p in pats:
+        files.extend(glob.glob(p))
+    if not files:
+        return None
+    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    return files[0]
+
+def candle_get(c: Any) -> Dict[str, float]:
+    if isinstance(c, (list, tuple)) and len(c) >= 5:
+        return {"ts": _safe_int(c[0]), "o": _safe_float(c[1]), "h": _safe_float(c[2]), "l": _safe_float(c[3]), "c": _safe_float(c[4]), "v": _safe_float(c[5]) if len(c) > 5 else 0.0}
+    if isinstance(c, dict):
+        ts = c.get("ts", c.get("timestamp", c.get("time", c.get("t", 0))))
+        o  = c.get("o", c.get("open", 0.0))
+        h  = c.get("h", c.get("high", 0.0))
+        l  = c.get("l", c.get("low", 0.0))
+        cl = c.get("c", c.get("close", 0.0))
+        v  = c.get("v", c.get("volume", 0.0))
+        return {"ts": _safe_int(ts), "o": _safe_float(o), "h": _safe_float(h), "l": _safe_float(l), "c": _safe_float(cl), "v": _safe_float(v)}
+    return {"ts": 0, "o": 0.0, "h": 0.0, "l": 0.0, "c": 0.0, "v": 0.0}
+
+def ema(values: List[float], period: int) -> List[Optional[float]]:
+    if period <= 1: return [v for v in values]
+    k = 2.0 / (period + 1.0)
+    out: List[Optional[float]] = [None] * len(values)
+    e: Optional[float] = None
+    for i, v in enumerate(values):
+        e = v if e is None else (v - e) * k + e
+        out[i] = e
+    return out
+
+def true_range(h: float, l: float, prev_c: float) -> float:
+    return max(h - l, abs(h - prev_c), abs(l - prev_c))
+
+def atr(cn: List[Dict[str, float]], period: int) -> List[Optional[float]]:
+    if len(cn) < 2: return [None] * len(cn)
+    trs: List[float] = []
+    prev_c = cn[0]["c"]
+    trs.append(cn[0]["h"] - cn[0]["l"])
+    for i in range(1, len(cn)):
+        h = cn[i]["h"]; l = cn[i]["l"]; c = cn[i]["c"]
+        trs.append(true_range(h, l, prev_c))
+        prev_c = c
+    out: List[Optional[float]] = [None] * len(cn)
+    if len(trs) < period: return out
+    a = sum(trs[:period]) / period
+    out[period - 1] = a
+    for i in range(period, len(trs)):
+        a = (a * (period - 1) + trs[i]) / period
+        out[i] = a
+    return out
+
+def percentile_rank(window: List[float], x: float) -> float:
+    if not window: return 0.0
+    s = sorted(window)
+    n = len(s)
+    lo = 0
+    for v in s:
+        if v <= x: lo += 1
+        else: break
+    return lo / n
+
+@dataclass
+class RegimeSnapshot:
+    ts_utc: str
+    market: str
+    interval: str
+    trend_regime: str
+    vol_regime: str
+    gate: str
+    size_mult: float
+    source_cache: str
+
+def atomic_write_json(path: str, payload: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, path)
+
+def main() -> int:
+    market = os.getenv("CB20_MARKET", "BTC-EUR")
+    interval = os.getenv("CB20_INTERVAL", "4h")
+
+    cache = pick_best_cache(market, interval)
+    if not cache:
+        print(f"CB20_FATAL: no cache found for {market} {interval} in {DATA_CACHE_DIR}")
+        return 2
+
+    candles_raw = load_candles_from_cache(cache)
+    if not candles_raw or len(candles_raw) < 300:
+        print(f"CB20_FATAL: cache too small or empty: {cache} n={len(candles_raw) if candles_raw else 0}")
+        return 2
+
+    cn = [candle_get(c) for c in candles_raw]
+    closes = [c["c"] for c in cn]
+    atr14 = atr(cn, 14)
+
+    ema200 = ema(closes, 200)
+    ema_slope_n = int(os.getenv("CB20_EMA_SLOPE_N", "20"))
+    slope = None
+    if len(ema200) > ema_slope_n and ema200[-1] is not None and ema200[-1-ema_slope_n] is not None:
+        slope = float(ema200[-1] - ema200[-1-ema_slope_n])
+
+    trend = "UNKNOWN"
+    if ema200[-1] is not None:
+        if closes[-1] > float(ema200[-1]) and (slope is None or slope > 0):
+            trend = "BULL"
+        elif closes[-1] < float(ema200[-1]) and (slope is None or slope < 0):
+            trend = "BEAR"
+        else:
+            trend = "SIDEWAYS"
+
+    vol = "UNKNOWN"
+    atr_vals = [float(x) for x in atr14 if x is not None]
+    if len(atr_vals) > 250 and atr14[-1] is not None:
+        look = atr_vals[-200:]
+        pr = percentile_rank(look, float(atr14[-1]))
+        if pr < 0.33: vol = "LOW"
+        elif pr < 0.66: vol = "MID"
+        else: vol = "HIGH"
+
+    gate = "ALLOW"
+    size = 1.0
+    if vol == "HIGH":
+        gate = "ALLOW"
+        size = 0.70
+    if trend == "UNKNOWN" or vol == "UNKNOWN":
+        gate = "ALLOW"
+        size = 1.0
+
+    snap = RegimeSnapshot(
+        ts_utc=now_utc(),
+        market=market,
+        interval=interval,
+        trend_regime=trend,
+        vol_regime=vol,
+        gate=gate,
+        size_mult=float(size),
+        source_cache=os.path.basename(cache),
+    )
+
+    out_path = os.path.join(REPORTS_DIR, "cb20_regime.json")
+    atomic_write_json(out_path, asdict(snap))
+    print(f"{now_utc()} CB20 OK market={market} interval={interval} trend={trend} vol={vol} gate={gate} size={size} cache={os.path.basename(cache)}")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

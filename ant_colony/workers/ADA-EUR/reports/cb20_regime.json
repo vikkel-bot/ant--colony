@@ -1,0 +1,10 @@
+{
+  "ts_utc": "2026-03-14T14:46:12.751673+00:00",
+  "market": "ADA-EUR",
+  "interval": "4h",
+  "trend_regime": "BEAR",
+  "vol_regime": "LOW",
+  "gate": "ALLOW",
+  "size_mult": 1.0,
+  "source_cache": "ADA-EUR_4h_candles.json"
+}

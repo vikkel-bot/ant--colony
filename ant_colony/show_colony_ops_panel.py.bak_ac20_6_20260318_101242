@@ -1,0 +1,135 @@
+﻿from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict
+
+
+STATUS_PATH = Path(r"C:\Trading\ANT_OUT\combined_colony_status.json")
+
+
+def load_json(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {
+            "ok": False,
+            "error": f"missing:{path}",
+            "markets": {},
+        }
+
+    encodings = ["utf-8-sig", "utf-8"]
+    last_error = None
+
+    for enc in encodings:
+        try:
+            return json.loads(path.read_text(encoding=enc))
+        except Exception as e:
+            last_error = e
+
+    return {
+        "ok": False,
+        "error": f"read_error:{last_error}",
+        "markets": {},
+    }
+
+
+def s(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def yn(value: Any) -> str:
+    if value is True:
+        return "Y"
+    if value is False:
+        return "N"
+    return ""
+
+
+def main() -> int:
+    data = load_json(STATUS_PATH)
+
+    print()
+    print("=" * 120)
+    print("COLONY OPS PANEL")
+    print("=" * 120)
+    print()
+
+    if "error" in data and not data.get("markets"):
+        print(f"STATUS_FILE : {STATUS_PATH}")
+        print(f"ERROR       : {data['error']}")
+        print()
+        return 1
+
+    print(f"STATUS_FILE : {STATUS_PATH}")
+    print(f"TS_UTC      : {s(data.get('ts_utc'))}")
+    print(f"MARKETS     : {s(data.get('market_count'))}")
+    print()
+
+    headers = [
+        "market",
+        "e3_gate",
+        "e3_trend",
+        "e4_state",
+        "health",
+        "size",
+        "probe_on",
+        "adapter_ok",
+        "parity_ok",
+        "lat_ms",
+    ]
+
+    widths = {
+        "market": 10,
+        "e3_gate": 8,
+        "e3_trend": 10,
+        "e4_state": 9,
+        "health": 8,
+        "size": 6,
+        "probe_on": 8,
+        "adapter_ok": 10,
+        "parity_ok": 9,
+        "lat_ms": 7,
+    }
+
+    header_line = "  ".join(h.ljust(widths[h]) for h in headers)
+    sep_line = "  ".join("-" * widths[h] for h in headers)
+
+    print(header_line)
+    print(sep_line)
+
+    markets = data.get("markets") or {}
+
+    for market in sorted(markets.keys()):
+        row = markets.get(market) or {}
+
+        edge3 = row.get("edge3") or {}
+        edge4 = row.get("edge4") or {}
+        health = row.get("health") or {}
+        probe = row.get("adapter_probe") or {}
+
+        values = {
+            "market": s(market),
+            "e3_gate": s(edge3.get("gate")),
+            "e3_trend": s(edge3.get("cb20_trend")),
+            "e4_state": s(edge4.get("state")),
+            "health": s(health.get("health_gate")),
+            "size": s(health.get("health_size_mult")),
+            "probe_on": yn(probe.get("probe_enabled")),
+            "adapter_ok": yn(probe.get("adapter_ok")),
+            "parity_ok": yn(probe.get("parity_ok")),
+            "lat_ms": s(probe.get("latency_ms")),
+        }
+
+        line = "  ".join(values[h].ljust(widths[h])[:widths[h]] for h in headers)
+        print(line)
+
+    print()
+    print("LEGEND: Y=yes, N=no, blank=not available for that market")
+    print()
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,109 @@
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ANT_COLONY = ROOT / "ant_colony"
+OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+OUT_JSON = OUT_DIR / "colony_cycle_runner_lite.json"
+OUT_TSV = OUT_DIR / "colony_cycle_runner_lite.tsv"
+
+STEPS = [
+    "worker_strategy_selection_lite.py",
+    "worker_execution_plan_lite.py",
+    "worker_execution_bridge_lite.py",
+    "worker_orchestration_stub_lite.py",
+    "worker_context_lite.py",
+    "worker_consumer_stub_lite.py",
+    "worker_runtime_intent_lite.py",
+    "worker_runtime_dispatch_stub_lite.py",
+    "worker_execution_simulator_lite.py",
+    "worker_position_sizing_lite.py",
+    "worker_portfolio_simulator_lite.py",
+    "worker_exit_rules_lite.py",
+    "worker_exit_simulator_lite.py",
+    "worker_exit_apply_stub_lite.py",
+    "worker_trade_lifecycle_lite.py",
+    "combined_colony_status_lite.py",
+    "colony_supervisor_status_lite.py",
+]
+
+
+def now_utc_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_step(filename: str) -> dict:
+    script_path = ANT_COLONY / filename
+    cmd = [sys.executable, str(script_path)]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        ok = proc.returncode == 0
+        return {
+            "step": filename,
+            "ok": ok,
+            "returncode": proc.returncode,
+            "stdout": (proc.stdout or "").strip(),
+            "stderr": (proc.stderr or "").strip(),
+        }
+    except Exception as e:
+        return {
+            "step": filename,
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(e),
+        }
+
+
+def main() -> int:
+    step_results = []
+    all_ok = True
+
+    for step in STEPS:
+        row = run_step(step)
+        step_results.append(row)
+        if not row["ok"]:
+            all_ok = False
+            break
+
+    result = {
+        "version": "colony_cycle_runner_lite_v1",
+        "ts_utc": now_utc_iso(),
+        "root": str(ROOT),
+        "steps_total": len(STEPS),
+        "steps_completed": len(step_results),
+        "ok": all_ok,
+        "steps": step_results,
+    }
+
+    OUT_JSON.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    tsv_lines = ["step\tok\treturncode"]
+    for row in step_results:
+        tsv_lines.append(f'{row["step"]}\t{row["ok"]}\t{row["returncode"]}')
+    OUT_TSV.write_text("\n".join(tsv_lines) + "\n", encoding="utf-8")
+
+    print(json.dumps({
+        "ok": all_ok,
+        "output_json": str(OUT_JSON),
+        "output_tsv": str(OUT_TSV),
+        "steps_completed": len(step_results),
+        "steps_total": len(STEPS),
+        "version": result["version"],
+    }, indent=2))
+
+    return 0 if all_ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

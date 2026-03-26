@@ -1,0 +1,27 @@
+﻿=== 2026-03-02T16:26:53Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:26:53.588111+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:04Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:04.290647+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:07Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:07.555567+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:36Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:36.790205+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:31:39Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:31:40.007023+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:29Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:29.819546+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:32Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:33.110247+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:47Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:47.684275+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+
+=== 2026-03-02T16:32:50Z RUNNER=C:\Users\vikke\OneDrive\bitvavo-bot_clean\ant_colony\workers\BTC-EUR\run_cb21_edge3.cmd EXIT=0 ===
+2026-03-02T16:32:50.734030+00:00 CB21 EDGE3_GATE gate=BLOCK trend=None vol=None cb20_mult=1.00 health_mult=0.00 base_pf=0.50 -> position_fraction=0.0000 reason=EDGE3_SNAPSHOT_MISSING
+

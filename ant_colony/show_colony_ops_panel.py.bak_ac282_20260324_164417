@@ -1,0 +1,132 @@
+﻿import json
+import os
+from datetime import datetime, UTC
+
+ANT_OUT = r"C:\Trading\ANT_OUT"
+
+COMBINED_PATH = os.path.join(ANT_OUT, "combined_colony_status.json")
+MARKET_DATA_PATH = os.path.join(ANT_OUT, "worker_market_data.json")
+EXECUTION_SUMMARY_PATH = os.path.join(ANT_OUT, "execution_summary.json")
+PAPER_EXECUTION_METRICS_PATH = os.path.join(ANT_OUT, "paper_execution_metrics.json")
+PAPER_EXECUTION_SUMMARY_PATH = os.path.join(ANT_OUT, "paper_execution_summary.json")
+PORTFOLIO_SUMMARY_PATH = os.path.join(ANT_OUT, "paper_portfolio_summary.json")
+
+
+def load_json(path, default=None):
+    if not os.path.exists(path):
+        return {} if default is None else default
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return {} if default is None else default
+
+
+def h1(text):
+    print("=" * 80)
+    print(text)
+    print("=" * 80)
+    print()
+
+
+def h2(text):
+    print(text)
+    print("-" * 80)
+
+
+def fmt(v):
+    if v is None:
+        return "-"
+    return str(v)
+
+
+def main():
+    combined = load_json(COMBINED_PATH, {})
+    market_data = load_json(MARKET_DATA_PATH, {})
+    execution_summary = load_json(EXECUTION_SUMMARY_PATH, {})
+    paper_metrics = load_json(PAPER_EXECUTION_METRICS_PATH, {})
+    paper_summary = load_json(PAPER_EXECUTION_SUMMARY_PATH, {})
+    portfolio_summary = load_json(PORTFOLIO_SUMMARY_PATH, {})
+
+    h1("UNIFIED ANT COLONY DASHBOARD")
+
+    h2("COLONY STATUS")
+    print(f"cycle_id : {fmt(combined.get('cycle_id'))}")
+    print(f"freshness_ok : {fmt(combined.get('freshness_ok'))}")
+    print(f"markets_allowed : {fmt(combined.get('markets_allowed'))}")
+    print(f"markets_blocked : {fmt(combined.get('markets_blocked'))}")
+
+    blocked_reasons = combined.get("blocked_reasons", {})
+    if isinstance(blocked_reasons, dict) and blocked_reasons:
+        blocked_text = ", ".join(f"{k}={v}" for k, v in blocked_reasons.items())
+    else:
+        blocked_text = "-"
+    print(f"blocked_reasons : {blocked_text}")
+    print()
+
+    h2("MARKET DATA STATUS")
+    print(f"component : {fmt(market_data.get('component'))}")
+    print(f"ts_utc : {fmt(market_data.get('ts_utc'))}")
+    print(f"market_count : {fmt(market_data.get('market_count'))}")
+    print(f"zero_price_count : {fmt(market_data.get('zero_price_count'))}")
+    print()
+
+    h2("EXECUTION SUMMARY")
+    print(f"allowed_count : {fmt(execution_summary.get('allowed_count'))}")
+    print(f"blocked_count : {fmt(execution_summary.get('blocked_count'))}")
+    print()
+
+    h2("PAPER EXECUTION METRICS")
+    print(f"equity : {fmt(paper_metrics.get('equity'))}")
+    print(f"cash : {fmt(paper_metrics.get('cash'))}")
+    print(f"position_count : {fmt(paper_metrics.get('position_count'))}")
+
+    markets = paper_metrics.get("markets", [])
+    if isinstance(markets, list):
+        markets_text = ", ".join(str(x) for x in markets) if markets else "-"
+    else:
+        markets_text = fmt(markets)
+    print(f"markets : {markets_text}")
+    print()
+
+    h2("PAPER PORTFOLIO VALUATION")
+    print(f"valuation_state : {fmt(portfolio_summary.get('valuation_state') or portfolio_summary.get('state'))}")
+    print(f"equity : {fmt(portfolio_summary.get('equity'))}")
+    print(f"cash : {fmt(portfolio_summary.get('cash'))}")
+    print(f"positions_market_value : {fmt(portfolio_summary.get('positions_market_value'))}")
+    print(f"unrealized_pnl : {fmt(portfolio_summary.get('unrealized_pnl'))}")
+    print(f"open_positions : {fmt(portfolio_summary.get('open_positions'))}")
+    print(f"priced_positions : {fmt(portfolio_summary.get('priced_positions'))}")
+    print(f"unpriced_positions : {fmt(portfolio_summary.get('unpriced_positions'))}")
+    print(f"fresh_positions : {fmt(portfolio_summary.get('fresh_positions'))}")
+    print(f"stale_positions : {fmt(portfolio_summary.get('stale_positions'))}")
+    print(f"all_prices_fresh : {fmt(portfolio_summary.get('all_prices_fresh'))}")
+    print(f"max_price_age_seconds : {fmt(portfolio_summary.get('max_price_age_seconds'))}")
+    print(f"equity_calc_mode : {fmt(portfolio_summary.get('equity_calc_mode'))}")
+    print()
+
+    h2("PAPER EXECUTION SUMMARY")
+    print(f"intents_processed : {fmt(paper_summary.get('intents_processed'))}")
+    print(f"intents_allowed : {fmt(paper_summary.get('intents_allowed'))}")
+    print(f"intents_skipped : {fmt(paper_summary.get('intents_skipped'))}")
+    print(f"log_file_exists : {fmt(paper_summary.get('log_file_exists'))}")
+    print(f"executed_ids_count : {fmt(paper_summary.get('executed_ids_count'))}")
+    print(f"position_count : {fmt(paper_summary.get('position_count'))}")
+    print()
+
+    h2("PER-MARKET EXECUTION INTENTS")
+    print(f"{'market':10} {'action':12} {'allowed':8} {'block_reason'}")
+    print(f"{'-'*10} {'-'*12} {'-'*8} {'-'*40}")
+
+    for market in sorted((combined.get("markets") or {}).keys()):
+        row = (combined.get("markets") or {}).get(market, {}) or {}
+        action = row.get("execution_action", "NO_ACTION")
+        allowed = row.get("execution_allowed", False)
+        reason = row.get("execution_block_reason", "-")
+        print(f"{market:10} {str(action):12} {str(allowed):8} {str(reason)}")
+
+    print()
+
+
+if __name__ == "__main__":
+    main()

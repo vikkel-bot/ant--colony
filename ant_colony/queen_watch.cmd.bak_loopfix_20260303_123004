@@ -1,0 +1,25 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+REM ScriptDir = ...\bitvavo-bot_clean\ant_colony\
+set "SCRIPTDIR=%~dp0"
+REM RepoRoot  = ...\bitvavo-bot_clean\
+for %%I in ("%SCRIPTDIR%..") do set "REPOROOT=%%~fI"
+
+REM Logs live under repo\ant_colony\
+set "LOG=%REPOROOT%\ant_colony\queen_watch.log"
+
+REM Ensure log folder exists
+if not exist "%REPOROOT%\ant_colony" mkdir "%REPOROOT%\ant_colony" >nul 2>&1
+
+echo ==== QUEEN_WATCH START %DATE% %TIME% ====>> "%LOG%"
+echo REPOROOT=%REPOROOT%>> "%LOG%"
+
+:loop
+echo.>> "%LOG%"
+echo ==== LOOP %DATE% %TIME% ====>> "%LOG%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Trading\ANT_RUN\queen_lite.ps1" -RepoRoot "%REPOROOT%" -OutDir "C:\Trading\ANT_OUT" >> "%LOG%" 2>&1
+
+timeout /t 60 /nobreak >nul
+goto loop
