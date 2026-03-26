@@ -70,3 +70,13 @@ secrets.*
 *.bak
 *.bak_*
 backup/
+
+# ===== Generated runtime artifacts =====
+*.json
+*.tsv
+
+# Keep only intentional static JSON if you ever add them
+!config*.json
+!*.schema.json
+!*.example.json
+!package-lock.json
