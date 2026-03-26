@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+import types
 
 from .base import BrokerAdapter, utc_now_iso
 
@@ -106,7 +107,7 @@ class BitvavoAdapter(BrokerAdapter):
 
     def _make_client(self):
         Bitvavo = self._import_client()
-        return Bitvavo(
+        client = Bitvavo(
             {
                 "APIKEY": self.api_key,
                 "APISECRET": self.api_secret,
@@ -115,6 +116,22 @@ class BitvavoAdapter(BrokerAdapter):
                 "DEBUGGING": False,
             }
         )
+
+        original_wait_for_reset = getattr(client, "waitForReset", None)
+
+        if callable(original_wait_for_reset):
+            def _safe_wait_for_reset(self_ref, wait_time):
+                try:
+                    safe_wait = float(wait_time)
+                except Exception:
+                    safe_wait = 0.0
+                if safe_wait < 0.0:
+                    safe_wait = 0.0
+                return original_wait_for_reset(safe_wait)
+
+            client.waitForReset = types.MethodType(_safe_wait_for_reset, client)
+
+        return client
 
     @staticmethod
     def _ms_to_iso(ms: Any) -> str:
