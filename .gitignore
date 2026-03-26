@@ -1,10 +1,67 @@
+﻿# ===== Python =====
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+
+# ===== Local IDE / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ===== Logs / temp =====
+logs/
+*.log
+*.tmp
+*.temp
+
+# ===== Project archives / snapshots =====
+_zips/
+*.zip
+
+# ===== Runtime / generated outputs =====
 data_cache/
-reports/*.jsonl
-reports/*.csv
-reports/*.log
-sim_state.json
-trades.jsonl
-news_signals.jsonl
+ANT_OUT/
+runtime_snapshot/
+code_snapshot/
+
+# Windows runtime path is outside repo, but keep patterns here too
+ant_colony_runtime_snapshot_*.zip
+edge_colony_runtime_snapshot_*.zip
+edge_colony_code_snapshot_*.zip
+
+# ===== Trading runtime artifacts =====
+*.jsonl
+
+# Generated reports / outputs inside repo if ever created
+reports/
+out/
+output/
+
+# ===== Secrets / env =====
+.env
+.env.*
+secrets.*
+*.key
+*.pem
+
+# Keep sample/config templates if needed
+!*.example
+!*.template
+
+# ===== Optional generated tabular artifacts =====
+*.tsv
+
+# ===== Do NOT ignore source code =====
+!ant_colony/**/*.py
+!*.py
+!*.ps1
+!*.cmd
+!requirements*.txt
+!README*
