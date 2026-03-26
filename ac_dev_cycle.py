@@ -84,7 +84,6 @@ def main():
                       "script": script, "ok": ok, "msg": msg[:200]})
         if not ok:
             overall_ok = False
-            break
 
     summary = {
         "version":    "ac_dev_cycle_v1",

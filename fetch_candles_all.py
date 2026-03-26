@@ -125,8 +125,6 @@ def fetch_market(market: str, interval: str, start_ms: int, end_ms: int) -> List
 
         # Cursor naar volgende venster
         cursor = batch_end + interval_step
-        time.sleep(0.15)
-
         time.sleep(0.15)   # respecteer rate limit
 
     all_candles.sort(key=lambda c: c[0])

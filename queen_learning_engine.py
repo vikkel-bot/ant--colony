@@ -21,7 +21,7 @@ import os
 import sys
 import statistics
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict
 
 # ── config ─────────────────────────────────────────────────────────────────
 DATA_CACHE = r"C:\Users\vikke\OneDrive\bitvavo-bot_clean\data_cache"
@@ -162,6 +162,10 @@ def run_backtest(closes: List[float], timestamps: List[int],
         ri = i - rsi_off
         bi = i - bb_off
         if ri < 0 or bi < 0 or not all_bb["lower"]:
+            i += 1; continue
+
+        # Bounds check voor pre-computed arrays
+        if ri >= len(all_rsi) or bi >= len(all_bb["lower"]):
             i += 1; continue
 
         cur_rsi = all_rsi[ri]

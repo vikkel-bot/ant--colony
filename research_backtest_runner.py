@@ -173,6 +173,9 @@ def run_backtest(closes: List[float], volumes: Optional[List[float]] = None,
 
         sig = None
         if ri >= 0 and bi >= 0 and all_bb["lower"]:
+            # Bounds check
+            if ri >= len(all_rsi) or bi >= len(all_bb["lower"]):
+                curve.append(equity); i += 1; continue
             cur_rsi = all_rsi[ri]
             cur_low = all_bb["lower"][bi]
             cur_mid = all_bb["mid"][bi]
@@ -182,9 +185,9 @@ def run_backtest(closes: List[float], volumes: Optional[List[float]] = None,
                 strength = min(1.0, ((25.0 - cur_rsi) / 25.0) + max(0.0, (0.08 - cur_wid) / 0.08))
                 sig = Signal("mean_reversion", cur, round(cur_mid, 8), round(cur * 0.975, 8), 6, round(strength, 4))
 
-        if sig is None and volumes and bi >= 0:
-            prev = closes[i - 1] if i > 0 else closes[i]
-            avg_vol  = sum(volumes[max(0, i-20):i]) / min(20, i)
+        if sig is None and volumes and bi >= 0 and i >= 2:
+            prev = closes[i - 1]
+            avg_vol  = sum(volumes[max(0, i-20):i]) / max(1, min(20, i))
             vol_mult = volumes[i] / (avg_vol + 1e-12)
             ret      = (closes[i] / prev - 1.0) if prev else 0.0
             if vol_mult >= 2.0 and ret >= 0.0075:
