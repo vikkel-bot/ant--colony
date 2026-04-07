@@ -101,51 +101,11 @@ def load_portfolio_consistency_check():
         return None
     
 
-def load_market_data_refresh_debug():
+def load_worker_market_data_debug():
     path = r"C:\Trading\ANT_OUT\worker_market_data.json"
     if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            obj = json.load(f)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
-
-
-def load_paper_positions_debug():
-    path = r"C:\Trading\ANT_OUT\paper_positions.json"
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            obj = json.load(f)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
-
-
-def load_worker_market_data_debug():
-    markets = ["ADA-EUR", "BNB-EUR", "BTC-EUR", "ETH-EUR", "SOL-EUR", "XRP-EUR"]
-    out = {}
-    for market in markets:
-        slug = market.split("-")[0].lower()
-        path = rf"C:\Trading\ANT_OUT\{slug}_worker_market_data_live.json"
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                obj = json.load(f)
-        except Exception:
-            continue
-
-        last_row = obj.get("last_row", {}) or {}
-        out[market] = {
-            "last_price": last_row.get("close", ""),
-            "ts_utc": last_row.get("ts_utc", "") or obj.get("last_ts_utc", "") or obj.get("ts_utc", ""),
-            "state": obj.get("state", "OK")
-        }
-    return {"markets": out}
+        return None
+    
 
 def parse_debug_ts(value):
     if not value:
@@ -159,8 +119,7 @@ def parse_debug_ts(value):
             dt = dt.replace(tzinfo=UTC)
         return dt.astimezone(UTC)
     except Exception:
-        return None
-    try:
+        return Nonetry:
         with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
@@ -313,7 +272,6 @@ def main():
     else:
         root_ts = wmd.get("ts_utc") or wmd.get("ts") or ""
         markets = wmd.get("markets", {}) or {}
-        age_map = {}
         if not markets:
             print("no markets in worker_market_data.json")
         else:
@@ -330,110 +288,30 @@ def main():
                     age_s = ""
                 else:
                     age_s = max(0, int((datetime.now(UTC) - dt).total_seconds()))
-                    age_map[market] = age_s
                 print(f"{market:10} {str(last_price):13} {str(ts_utc):26} {str(age_s):7} {state}")
-
-            print("")
-            print("FRESHNESS SUMMARY")
-            print("-" * 80)
-
-            positions = load_paper_positions_debug()
-            position_market = ""
-            for mkt in sorted((positions or {}).keys()):
-                row = positions.get(mkt, {}) or {}
-                pos_state = str(row.get("position", "FLAT") or "FLAT").upper()
-                if pos_state != "FLAT":
-                    position_market = mkt
-                    break
-
-            position_market_age_s = age_map.get(position_market, "") if position_market else ""
-            oldest_price_age_s = max(age_map.values()) if age_map else ""
-            newest_price_age_s = min(age_map.values()) if age_map else ""
-
-            print(f"position_market : {position_market}")
-            print(f"position_market_age_s : {position_market_age_s}")
-            print(f"oldest_price_age_s : {oldest_price_age_s}")
-            print(f"newest_price_age_s : {newest_price_age_s}")
-            print(f"freshness_limit_s : 900")
-
-            print("")
-            print("PIPELINE TIMING SUMMARY")
-            print("-" * 80)
-
-            mdr = load_market_data_refresh_debug()
-            refresh_ts = mdr.get("ts_utc") or mdr.get("ts") or ""
-            refresh_dt = parse_debug_ts(refresh_ts)
-            if refresh_dt is None:
-                refresh_age_s = ""
-            else:
-                refresh_age_s = max(0, int((datetime.now(UTC) - refresh_dt).total_seconds()))
-
-            combined = load_json(r"C:\Trading\ANT_OUT\combined_colony_status.json", {})
-            combined_cycle_id = combined.get("cycle_id", "") if isinstance(combined, dict) else ""
-
-            print(f"market_data_refresh_ts : {refresh_ts}")
-            print(f"market_data_refresh_age_s : {refresh_age_s}")
-            print(f"combined_cycle_id : {combined_cycle_id}")
-            print(f"position_market : {position_market}")
-            print(f"position_price_age_s : {position_market_age_s}")
-            print(f"freshness_limit_s : 900")
-
-            portfolio_state_path = r"C:\Trading\ANT_OUT\paper_portfolio_state.json"
-            portfolio_state = {}
-            if os.path.exists(portfolio_state_path):
-                try:
-                    with open(portfolio_state_path, "r", encoding="utf-8-sig") as f:
-                        portfolio_state = json.load(f)
-                except Exception:
-                    portfolio_state = {}
-
-            position_row = {}
-            if position_market and isinstance(portfolio_state, dict):
-                position_row = ((portfolio_state.get("positions", {}) or {}).get(position_market, {}) or {})
-
-            print("")
-            print("POSITION VALUATION DEBUG")
-            print("-" * 80)
-            print(f"position_market : {position_market}")
-            print(f"position_price_ts : {position_row.get('price_ts', '')}")
-            print(f"position_price_age_seconds : {position_row.get('price_age_seconds', '')}")
-            print(f"position_price_freshness_ok : {position_row.get('price_freshness_ok', '')}")
-            print(f"position_mtm_state : {position_row.get('mtm_state', '')}")
-            print(f"position_mark_price : {position_row.get('mark_price', '')}")
-            print(f"position_market_value : {position_row.get('market_value', '')}")
-            print(f"position_unrealized_pnl : {position_row.get('unrealized_pnl', '')}")
 
     print("")
     print("PORTFOLIO CONSISTENCY CHECK")
     print("-" * 80)
 
-    pcc_path = r"C:\Trading\ANT_OUT\paper_portfolio_consistency_check.json"
-    if not os.path.exists(pcc_path):
+    pcc = load_portfolio_consistency_check()
+    if not pcc:
         print("no paper_portfolio_consistency_check.json")
     else:
-        try:
-            with open(pcc_path, "r", encoding="utf-8-sig") as f:
-                pcc = json.load(f)
-        except Exception:
-            pcc = None
+        print(f"state : {pcc.get('state')}")
+        print(f"consistency_ok : {pcc.get('consistency_ok')}")
+        print(f"valuation_state : {pcc.get('valuation_state')}")
+        print(f"cash_diff_state_vs_valuation : {pcc.get('cash_diff_state_vs_valuation')}")
+        print(f"equity_sanity_ok : {pcc.get('equity_sanity_ok')}")
+        print(f"open_positions_diff_state_vs_valuation : {pcc.get('open_positions_diff_state_vs_valuation')}")
+        print(f"open_positions_diff_state_vs_reconstruction : {pcc.get('open_positions_diff_state_vs_reconstruction')}")
+        print(f"open_positions_diff_valuation_vs_reconstruction : {pcc.get('open_positions_diff_valuation_vs_reconstruction')}")
 
-        if not pcc:
-            print("no paper_portfolio_consistency_check.json")
+        issues = pcc.get("issues", []) or []
+        if issues:
+            print("issues : " + ", ".join(str(x) for x in issues))
         else:
-            print(f"state : {pcc.get('state')}")
-            print(f"consistency_ok : {pcc.get('consistency_ok')}")
-            print(f"valuation_state : {pcc.get('valuation_state')}")
-            print(f"cash_diff_state_vs_valuation : {pcc.get('cash_diff_state_vs_valuation')}")
-            print(f"equity_sanity_ok : {pcc.get('equity_sanity_ok')}")
-            print(f"open_positions_diff_state_vs_valuation : {pcc.get('open_positions_diff_state_vs_valuation')}")
-            print(f"open_positions_diff_state_vs_reconstruction : {pcc.get('open_positions_diff_state_vs_reconstruction')}")
-            print(f"open_positions_diff_valuation_vs_reconstruction : {pcc.get('open_positions_diff_valuation_vs_reconstruction')}")
-
-            issues = pcc.get("issues", []) or []
-            if issues:
-                print("issues : " + ", ".join(str(x) for x in issues))
-            else:
-                print("issues : none")
+            print("issues : none")
 
     print("")
     print("STRATEGY FEEDBACK STATE")
@@ -459,14 +337,6 @@ def main():
     print("")
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
 
 
 

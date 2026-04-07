@@ -1,4 +1,20 @@
 ﻿from __future__ import annotations
+# === AC-36.5.2 GLOBAL SLEEP GUARD ===
+import time as _time_module
+
+_original_sleep = _time_module.sleep
+
+def _safe_sleep(seconds):
+    try:
+        s = float(seconds)
+    except Exception:
+        s = 0.0
+    if s < 0.0:
+        s = 0.0
+    return _original_sleep(s)
+
+_time_module.sleep = _safe_sleep
+# === END PATCH ===
 
 import json
 import os
@@ -125,9 +141,17 @@ class BitvavoAdapter(BrokerAdapter):
                     safe_wait = float(wait_time)
                 except Exception:
                     safe_wait = 0.0
+
                 if safe_wait < 0.0:
                     safe_wait = 0.0
-                return original_wait_for_reset(safe_wait)
+
+                try:
+                    return original_wait_for_reset(safe_wait)
+                except ValueError as e:
+                    if "sleep length must be non-negative" in str(e):
+                        time.sleep(0.0)
+                        return None
+                    raise
 
             client.waitForReset = types.MethodType(_safe_wait_for_reset, client)
 
@@ -471,3 +495,6 @@ class BitvavoAdapter(BrokerAdapter):
 
     def get_fills(self, market: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         return self._not_implemented("get_fills", market=market)
+
+
+

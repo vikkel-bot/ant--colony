@@ -1,4 +1,5 @@
 ﻿import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,7 +12,7 @@ def now_utc():
 
 def main():
     market_flags = {
-        "BTC-EUR": False,
+        "BTC-EUR": True,
         "ETH-EUR": False,
         "SOL-EUR": False,
         "XRP-EUR": False,
@@ -19,10 +20,12 @@ def main():
         "BNB-EUR": False,
     }
 
+    global_enabled = str(os.getenv("AC_GLOBAL_EXECUTION_ENABLED", "0")).strip().lower() in ("1", "true", "yes", "on")
+
     data = {
         "component": "build_execution_control_lite",
         "ts_utc": now_utc(),
-        "global_execution_enabled": False,
+        "global_execution_enabled": global_enabled,
         "market_execution_enabled": market_flags,
     }
 
@@ -35,3 +38,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

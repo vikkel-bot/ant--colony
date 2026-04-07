@@ -11,8 +11,9 @@ MARKET_DATA_FILE = os.path.join(ANT_OUT, "worker_market_data.json")
 SUMMARY_FILE = os.path.join(ANT_OUT, "paper_portfolio_summary.json")
 METRICS_FILE = os.path.join(ANT_OUT, "paper_portfolio_metrics.json")
 VALUATION_JSON_FILE = os.path.join(ANT_OUT, "paper_portfolio_valuation.json")
+VALUATION_TSV_FILE = os.path.join(ANT_OUT, "paper_portfolio_valuation.tsv")
 
-MAX_PRICE_AGE_SECONDS = 1200
+MAX_PRICE_AGE_SECONDS = 900
 
 
 def load_json(path, default=None):
@@ -295,11 +296,33 @@ def main():
     save_json_atomic(SUMMARY_FILE, summary)
 
     save_json_atomic(VALUATION_JSON_FILE, summary)
+    ,
+            "ts": summary.get("ts", ""),
+            "ok": summary.get("ok", ""),
+            "state": summary.get("state", ""),
+            "valuation_state": summary.get("valuation_state", ""),
+            "cash": summary.get("cash", ""),
+            "equity": summary.get("equity", ""),
+            "positions_market_value": summary.get("positions_market_value", ""),
+            "unrealized_pnl": summary.get("unrealized_pnl", ""),
+            "open_positions": summary.get("open_positions", ""),
+            "priced_positions": summary.get("priced_positions", ""),
+            "unpriced_positions": summary.get("unpriced_positions", ""),
+            "fresh_positions": summary.get("fresh_positions", ""),
+            "stale_positions": summary.get("stale_positions", ""),
+            "all_prices_fresh": summary.get("all_prices_fresh", ""),
+            "max_price_age_seconds": summary.get("max_price_age_seconds", ""),
+            "equity_calc_mode": summary.get("equity_calc_mode", ""),
+            "hard_block_reason": summary.get("hard_block_reason", "")
+        }
+    )
+
     print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":
     main()
+
 
 
 

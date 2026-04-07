@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$OutDir = $env:ANT_OUT_DIR
 )
 
@@ -80,6 +80,17 @@ if(Test-Path $workersRoot){
     $cb20Path   = Join-Path $wroot "reports\cb20_regime.json"
     $cb21Path   = Join-Path $wroot "reports\edge3_cb21_meta.json"
     $snapPath   = Join-Path $wroot "reports\edge3_snapshot.json"
+
+    if($market -eq "BTC-EUR"){
+      $liveReportsRoot = "C:\Trading\EDGE3\var\reports"
+      $liveCb20Path = Join-Path $liveReportsRoot "cb20_regime.json"
+      $liveCb21Path = Join-Path $liveReportsRoot "edge3_cb21_meta.json"
+      $liveSnapPath = Join-Path $liveReportsRoot "edge3_snapshot.json"
+
+      if(Test-Path $liveCb20Path){ $cb20Path = $liveCb20Path }
+      if(Test-Path $liveCb21Path){ $cb21Path = $liveCb21Path }
+      if(Test-Path $liveSnapPath){ $snapPath = $liveSnapPath }
+    }
 
     $cb20 = TryReadJsonShared $cb20Path
     $cb21 = TryReadJsonShared $cb21Path
