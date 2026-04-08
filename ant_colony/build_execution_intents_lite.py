@@ -10,6 +10,9 @@ TEST_OVERRIDE_PATH = OUT_DIR / "paper_execution_test_override.json"
 PORTFOLIO_SUMMARY_PATH = OUT_DIR / "paper_portfolio_summary.json"
 WORKER_SELECTION_PATH = OUT_DIR / "worker_strategy_selection.json"
 
+# AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias
+ENABLED_STRATEGIES = ["EDGE3", "EDGE4"]
+
 
 def utc_now_ts():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -99,46 +102,22 @@ def freshness_block_active(portfolio_summary: dict):
     return (valuation_state == "BLOCKED_FRESHNESS") or (not all_prices_fresh)
 
 
-def infer_natural_intent(market, market_row, selection_row):
-    edge3 = market_row.get("edge3") or {}
-    health = market_row.get("health") or {}
-
-    selected_strategy = safe_str(selection_row.get("selected_strategy"), "NONE").upper()
-    selected_bias = safe_str(selection_row.get("selected_bias"), "NEUTRAL").upper()
-    selection_reason = safe_str(selection_row.get("selection_reason"), "")
-    selected_size_mult = selection_row.get("selected_size_mult", health.get("health_size_mult", 1.0))
-
-    edge3_gate = safe_str(edge3.get("gate"), "")
-    health_gate = safe_str(health.get("health_gate"), "")
-
-    action = "NO_ACTION"
-    strategy = "NONE"
-    bias = "NEUTRAL"
-    reason = "NO_STRATEGY_SIGNAL"
-
-    if selected_strategy in ("EDGE3", "EDGE4") and selected_bias == "LONG":
-        if (selected_strategy == "EDGE3" and edge3_gate == "ALLOW" and health_gate == "ALLOW") or (selected_strategy == "EDGE4" and health_gate == "ALLOW"):
-            action = "ENTER_LONG"
-            strategy = selected_strategy
-            bias = "LONG"
-            reason = selection_reason or f"{selected_strategy}_LONG_SIGNAL"
-        else:
-            action = "NO_ACTION"
-            strategy = selected_strategy
-            bias = "NEUTRAL"
-            reason = f"{selected_strategy}_SIGNAL_BLOCKED_BY_LOCAL_GATES"
-
-    return {
-        "market": market,
-        "action": action,
-        "strategy": strategy,
-        "bias": bias,
-        "size_mult": selected_size_mult,
-        "reason": reason,
-        "selected_strategy": selected_strategy,
-        "selected_bias": selected_bias,
-        "selection_reason": selection_reason,
-    }
+def infer_strategy_signal(strategy: str, edge3_gate: str, health_gate: str):
+    """
+    AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias.
+    Bepaal per strategie of er een entry-signaal is op basis van gate-status.
+    EDGE3: vereist zowel edge3_gate als health_gate ALLOW.
+    EDGE4: vereist alleen health_gate ALLOW (ongeacht edge3_gate).
+    """
+    if strategy == "EDGE3":
+        if edge3_gate == "ALLOW" and health_gate == "ALLOW":
+            return "ENTER_LONG", "EDGE3_GATE_SIGNAL"
+        return "NO_ACTION", "EDGE3_GATE_BLOCKED"
+    if strategy == "EDGE4":
+        if health_gate == "ALLOW":
+            return "ENTER_LONG", "EDGE4_HEALTH_GATE_SIGNAL"
+        return "NO_ACTION", "EDGE4_HEALTH_GATE_BLOCKED"
+    return "NO_ACTION", "UNKNOWN_STRATEGY"
 
 
 def main():
@@ -191,122 +170,138 @@ def main():
         market_row = markets.get(market) or {}
         edge3 = market_row.get("edge3") or {}
         health = market_row.get("health") or {}
-        readiness = dict(market_row.get("execution_readiness") or {})
-        selection_row = worker_selection_map.get(market, {}) or {}
+        readiness_base = dict(market_row.get("execution_readiness") or {})
 
-        natural = infer_natural_intent(market, market_row, selection_row)
+        edge3_gate = safe_str(edge3.get("gate"), "")
+        health_gate = safe_str(health.get("health_gate"), "")
+        size_mult = health.get("health_size_mult", 1.0)
 
-        action = natural["action"]
-        strategy = natural["strategy"]
-        bias = natural["bias"]
-        size_mult = natural["size_mult"]
-        natural_reason = natural["reason"]
+        base_allowed = bool(readiness_base.get("allowed", False))
+        base_reason = readiness_base.get("reason")
+        base_guard_blockers = derive_guard_blockers(readiness_base)
 
-        allowed = bool(readiness.get("allowed", False))
-        reason = readiness.get("reason")
-        guard_blockers = derive_guard_blockers(readiness)
+        override_applied = bool(
+            test_override["enabled"] and safe_str(test_override["market"]) == market
+        )
 
-        # AC39: EDGE4 is not blocked by EDGE3 gate
-        if strategy == "EDGE4":
-            guard_blockers = [b for b in guard_blockers if not str(b).startswith("EDGE3_")]
-            if safe_str(reason) == "GATE_BLOCKED" and safe_str(readiness.get("health_gate")) == "ALLOW":
+        strategy_results = {}
+
+        # AC-40: loop over alle enabled strategieën per markt
+        for strategy in ENABLED_STRATEGIES:
+            # AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias
+            action, signal_reason = infer_strategy_signal(strategy, edge3_gate, health_gate)
+
+            # Kopieer readiness en guard_blockers per strategie
+            readiness = dict(readiness_base)
+            guard_blockers = list(base_guard_blockers)
+            allowed = base_allowed
+            reason = base_reason
+
+            # AC39: EDGE4 wordt niet geblokkeerd door EDGE3-gate
+            if strategy == "EDGE4":
+                guard_blockers = [b for b in guard_blockers if not str(b).startswith("EDGE3_")]
+                if safe_str(reason) == "GATE_BLOCKED" and health_gate == "ALLOW":
+                    allowed = True
+                    reason = "ALLOW"
+                    readiness["allowed"] = True
+                    readiness["reason"] = "ALLOW"
+
+            primary_block_reason = guard_blockers[0] if guard_blockers else safe_str(reason, "UNKNOWN")
+
+            if override_applied:
                 allowed = True
-                reason = "ALLOW"
+                action = test_override["action"]
+                reason = test_override["reason"]
                 readiness["allowed"] = True
-                readiness["reason"] = "ALLOW"
+                readiness["reason"] = test_override["reason"]
+                signal_reason = test_override["reason"]
 
-        primary_block_reason = guard_blockers[0] if len(guard_blockers) > 0 else safe_str(reason, "UNKNOWN")
-        override_applied = False
+            if freshness_block:
+                allowed = False
+                action = "NO_ACTION"
+                reason = "FRESHNESS_BLOCK"
+                readiness["allowed"] = False
+                readiness["reason"] = "FRESHNESS_BLOCK"
 
-        if test_override["enabled"] and safe_str(test_override["market"]) == market:
-            allowed = True
-            action = test_override["action"]
-            strategy = "FORCED"
-            bias = "LONG" if action == "ENTER_LONG" else "NEUTRAL"
-            reason = test_override["reason"]
-            readiness["allowed"] = True
-            readiness["reason"] = test_override["reason"]
-            override_applied = True
+            # Geen ENTER_LONG zonder executie-toestemming
+            if not allowed:
+                action = "NO_ACTION"
 
-        if freshness_block:
-            allowed = False
-            reason = "FRESHNESS_BLOCK"
-            readiness["allowed"] = False
-            readiness["reason"] = "FRESHNESS_BLOCK"
-            override_applied = False
+            position_key = f"{market}__{strategy}"
+            decision_id = f"{position_key}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"
 
-        decision_id = f"{market}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"
-
-        intent = {
-            "version": "execution_intent_v5",
-            "ts_utc": now_ts,
-            "source_component": "build_execution_intents_lite",
-            "cycle_id": cycle_id,
-            "market": market,
-            "decision_id": decision_id,
-            "action": action,
-            "strategy": strategy,
-            "bias": bias,
-            "size_mult": size_mult,
-            "edge3_gate": edge3.get("gate"),
-            "health": health.get("health_gate"),
-            "execution_allowed": allowed,
-            "block_reason": reason,
-            "primary_block_reason": primary_block_reason,
-            "guard_blockers": guard_blockers,
-            "natural_reason": natural_reason,
-            "execution_readiness": readiness,
-            "test_override_applied": override_applied,
-            "selection_snapshot": {
-                "selected_strategy": natural["selected_strategy"],
-                "selected_bias": natural["selected_bias"],
-                "selection_reason": natural["selection_reason"],
-            },
-            "source_files": {
-                "combined_status": str(COMBINED_STATUS_PATH),
-                "worker_strategy_selection": str(WORKER_SELECTION_PATH),
-                "test_override": str(TEST_OVERRIDE_PATH),
-                "portfolio_summary": str(PORTFOLIO_SUMMARY_PATH),
-            },
-            "source_meta": {
-                "combined_status_version": combined_version,
-                "combined_status_ts_utc": combined_ts_utc,
-                "combined_status_cycle_id": cycle_id,
-                "portfolio_valuation_state": safe_str(portfolio_summary.get("valuation_state")),
-                "portfolio_all_prices_fresh": bool(portfolio_summary.get("all_prices_fresh", False)),
-                "worker_selection_error": worker_selection_err,
+            intent = {
+                "version": "execution_intent_v6",
+                "ts_utc": now_ts,
+                "source_component": "build_execution_intents_lite",
+                "cycle_id": cycle_id,
+                "market": market,
+                "position_key": position_key,
+                "decision_id": decision_id,
+                "action": action,
+                "strategy": strategy,
+                "bias": "LONG" if action == "ENTER_LONG" else "NEUTRAL",
+                "size_mult": size_mult,
+                "edge3_gate": edge3_gate or None,
+                "health_gate": health_gate or None,
+                "execution_allowed": allowed,
+                "block_reason": reason,
+                "primary_block_reason": primary_block_reason,
+                "guard_blockers": guard_blockers,
+                "signal_reason": signal_reason,
+                "execution_readiness": readiness,
+                "test_override_applied": override_applied,
+                "source_files": {
+                    "combined_status": str(COMBINED_STATUS_PATH),
+                    "worker_strategy_selection": str(WORKER_SELECTION_PATH),
+                    "test_override": str(TEST_OVERRIDE_PATH),
+                    "portfolio_summary": str(PORTFOLIO_SUMMARY_PATH),
+                },
+                "source_meta": {
+                    "combined_status_version": combined_version,
+                    "combined_status_ts_utc": combined_ts_utc,
+                    "combined_status_cycle_id": cycle_id,
+                    "portfolio_valuation_state": safe_str(portfolio_summary.get("valuation_state")),
+                    "portfolio_all_prices_fresh": bool(portfolio_summary.get("all_prices_fresh", False)),
+                    "worker_selection_error": worker_selection_err,
+                },
             }
-        }
 
-        out_path = OUT_DIR / f"{market}_execution_intent.json"
-        out_path.write_text(json.dumps(intent, indent=2), encoding="utf-8")
+            out_path = OUT_DIR / f"{position_key}_execution_intent.json"
+            out_path.write_text(json.dumps(intent, indent=2), encoding="utf-8")
+
+            strategy_results[strategy] = {
+                "allowed": allowed,
+                "action": action,
+                "reason": reason,
+                "signal_reason": signal_reason,
+                "test_override_applied": override_applied,
+                "intent_file": str(out_path),
+            }
+
+            if allowed and action == "ENTER_LONG":
+                allowed_count += 1
+            else:
+                blocked_count += 1
+
+            add_reason(reason_counts, reason)
+            print(f"WROTE {out_path}")
 
         summary_markets[market] = {
-            "allowed": allowed,
-            "reason": reason,
-            "action": action,
-            "strategy": strategy,
-            "natural_reason": natural_reason,
-            "test_override_applied": override_applied,
-            "intent_file": str(out_path),
+            "edge3_gate": edge3_gate or None,
+            "health_gate": health_gate or None,
+            "strategies": strategy_results,
         }
 
-        if allowed:
-            allowed_count += 1
-        else:
-            blocked_count += 1
-
-        add_reason(reason_counts, reason)
-        print(f"WROTE {out_path}")
-
     summary = {
-        "version": "execution_summary_v8",
+        "version": "execution_summary_v9",
         "ts_utc": now_ts,
         "source_component": "build_execution_intents_lite",
         "combined_status_ok": True,
         "combined_status_error": None,
         "worker_selection_error": worker_selection_err,
         "markets_total": len(markets),
+        "intents_total": len(markets) * len(ENABLED_STRATEGIES),
         "allowed_count": allowed_count,
         "blocked_count": blocked_count,
         "freshness_ok": bool(combined_freshness.get("freshness_ok", False)),
@@ -323,21 +318,20 @@ def main():
         "markets": summary_markets,
     }
 
-    # === AC38 SIGNAL VISIBILITY (SAFE DEBUG) ===
+    # === AC40 SIGNAL VISIBILITY (MULTI-STRATEGY) ===
     try:
         visibility = {}
         for mkt in sorted(markets.keys()):
             m = markets.get(mkt, {}) or {}
-            sel = worker_selection_map.get(mkt, {}) or {}
-
             visibility[mkt] = {
-                "selected_strategy": sel.get("selected_strategy"),
-                "selected_bias": sel.get("selected_bias"),
-                "selection_reason": sel.get("selection_reason"),
                 "edge3_gate": (m.get("edge3") or {}).get("gate"),
                 "health_gate": (m.get("health") or {}).get("health_gate"),
-                "allowed": (m.get("execution_readiness") or {}).get("allowed"),
-                "reason": (m.get("execution_readiness") or {}).get("reason"),
+                "readiness_allowed": (m.get("execution_readiness") or {}).get("allowed"),
+                "readiness_reason": (m.get("execution_readiness") or {}).get("reason"),
+                "strategies": {
+                    s: summary_markets.get(mkt, {}).get("strategies", {}).get(s, {})
+                    for s in ENABLED_STRATEGIES
+                },
             }
 
         (OUT_DIR / "signal_visibility.json").write_text(
@@ -346,6 +340,7 @@ def main():
         )
     except Exception:
         pass
+
     OUT_SUMMARY_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"WROTE {OUT_SUMMARY_PATH}")
 

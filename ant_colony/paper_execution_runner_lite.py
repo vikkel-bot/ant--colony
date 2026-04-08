@@ -72,127 +72,129 @@ def main():
 
     cash = to_float(portfolio.get("cash", 10000.0), 10000.0)
 
-    for market, row in sorted(markets.items()):
-        intents_processed += 1
-        allowed = bool(row.get("allowed", False))
-        action = str(row.get("action", "NO_ACTION") or "NO_ACTION").upper()
-        reason = row.get("reason")
-        intent_file = row.get("intent_file")
+    for market, market_row in sorted(markets.items()):
+        # AC-40: per-strategy loop (was: per-market)
+        for strategy, row in (market_row.get("strategies") or {}).items():
+            intents_processed += 1
+            allowed = bool(row.get("allowed", False))
+            action = str(row.get("action", "NO_ACTION") or "NO_ACTION").upper()
+            reason = row.get("reason")
+            intent_file = row.get("intent_file")
 
-        if not allowed:
-            intents_skipped += 1
-            continue
-
-        if not intent_file:
-            intents_skipped += 1
-            continue
-
-        intent = load_json(Path(intent_file), {})
-        decision_id = str(intent.get("decision_id", ""))
-        strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
-        position_key = f"{market}__{strategy}"
-
-        if not decision_id or decision_id in executed_ids:
-            intents_skipped += 1
-            continue
-
-        if action == "ENTER_LONG":
-            price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
-            size_mult = to_float(intent.get("size_mult", 1.0), 1.0)
-
-            if price <= 0.0:
+            if not allowed:
                 intents_skipped += 1
                 continue
 
-            base_notional = min(1000.0, cash * 0.10)
-            notional = round(base_notional * size_mult, 2)
-
-            if notional <= 0.0 or cash < notional:
+            if not intent_file:
                 intents_skipped += 1
                 continue
 
-            size = round(notional / price, 10)
-
-            positions[position_key] = {
-                "position": "LONG",
-                "size": size,
-                "entry_price": price,
-                "entry_ts": ts,
-                "decision_id": decision_id,
-                "execution_id": decision_id.replace("_ENTER_LONG", ""),
-                "notional_eur": notional
-            }
-
-            portfolio["positions"][position_key] = positions[position_key]
-            cash = round(cash - notional, 2)
-
-            append_jsonl(EXECUTION_LOG_PATH, {
-                "ts_utc": ts,
-                "market": market,
-                "action": "ENTER_LONG",
-                "decision_id": decision_id,
-                "price": price,
-                "size": size,
-                "notional_eur": notional,
-                "reason": reason
-            })
-
-            executed_ids.append(decision_id)
-            executed_now += 1
-            intents_allowed += 1
-
-        elif action == "EXIT_LONG":
+            intent = load_json(Path(intent_file), {})
+            decision_id = str(intent.get("decision_id", ""))
             strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
             position_key = f"{market}__{strategy}"
-            pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
-            if str(pos.get("position", "FLAT")).upper() != "LONG":
+
+            if not decision_id or decision_id in executed_ids:
                 intents_skipped += 1
                 continue
 
-            price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
-            size = to_float(pos.get("size", 0.0), 0.0)
-            entry_price = to_float(pos.get("entry_price", 0.0), 0.0)
-            notional_back = round(size * price, 2)
-            realized_pnl = round(size * (price - entry_price), 2)
+            if action == "ENTER_LONG":
+                price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
+                size_mult = to_float(intent.get("size_mult", 1.0), 1.0)
 
-            if price <= 0.0 or size <= 0.0:
+                if price <= 0.0:
+                    intents_skipped += 1
+                    continue
+
+                base_notional = min(1000.0, cash * 0.10)
+                notional = round(base_notional * size_mult, 2)
+
+                if notional <= 0.0 or cash < notional:
+                    intents_skipped += 1
+                    continue
+
+                size = round(notional / price, 10)
+
+                positions[position_key] = {
+                    "position": "LONG",
+                    "size": size,
+                    "entry_price": price,
+                    "entry_ts": ts,
+                    "decision_id": decision_id,
+                    "execution_id": decision_id.replace("_ENTER_LONG", ""),
+                    "notional_eur": notional
+                }
+
+                portfolio["positions"][position_key] = positions[position_key]
+                cash = round(cash - notional, 2)
+
+                append_jsonl(EXECUTION_LOG_PATH, {
+                    "ts_utc": ts,
+                    "market": market,
+                    "action": "ENTER_LONG",
+                    "decision_id": decision_id,
+                    "price": price,
+                    "size": size,
+                    "notional_eur": notional,
+                    "reason": reason
+                })
+
+                executed_ids.append(decision_id)
+                executed_now += 1
+                intents_allowed += 1
+
+            elif action == "EXIT_LONG":
+                strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
+                position_key = f"{market}__{strategy}"
+                pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
+                if str(pos.get("position", "FLAT")).upper() != "LONG":
+                    intents_skipped += 1
+                    continue
+
+                price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
+                size = to_float(pos.get("size", 0.0), 0.0)
+                entry_price = to_float(pos.get("entry_price", 0.0), 0.0)
+                notional_back = round(size * price, 2)
+                realized_pnl = round(size * (price - entry_price), 2)
+
+                if price <= 0.0 or size <= 0.0:
+                    intents_skipped += 1
+                    continue
+
+                cash = round(cash + notional_back, 2)
+
+                append_jsonl(EXECUTION_LOG_PATH, {
+                    "ts_utc": ts,
+                    "market": market,
+                    "action": "EXIT_LONG",
+                    "decision_id": decision_id,
+                    "price": price,
+                    "size": size,
+                    "notional_eur": notional_back,
+                    "realized_pnl": realized_pnl,
+                    "reason": reason
+                })
+
+                positions[position_key] = {
+                    "position": "FLAT",
+                    "size": 0.0,
+                    "entry_price": 0.0,
+                    "entry_ts": None,
+                    "decision_id": decision_id,
+                    "execution_id": decision_id.replace("_EXIT_LONG", ""),
+                    "notional_eur": 0.0,
+                    "exit_price": price,
+                    "exit_ts": ts,
+                    "realized_pnl": realized_pnl
+                }
+
+                portfolio["positions"][position_key] = positions[position_key]
+                executed_ids.append(decision_id)
+                executed_now += 1
+                intents_allowed += 1
+
+            else:
                 intents_skipped += 1
-                continue
-
-            cash = round(cash + notional_back, 2)
-
-            append_jsonl(EXECUTION_LOG_PATH, {
-                "ts_utc": ts,
-                "market": market,
-                "action": "EXIT_LONG",
-                "decision_id": decision_id,
-                "price": price,
-                "size": size,
-                "notional_eur": notional_back,
-                "realized_pnl": realized_pnl,
-                "reason": reason
-            })
-
-            positions[position_key] = {
-                "position": "FLAT",
-                "size": 0.0,
-                "entry_price": 0.0,
-                "entry_ts": None,
-                "decision_id": decision_id,
-                "execution_id": decision_id.replace("_EXIT_LONG", ""),
-                "notional_eur": 0.0,
-                "exit_price": price,
-                "exit_ts": ts,
-                "realized_pnl": realized_pnl
-            }
-
-            portfolio["positions"][position_key] = positions[position_key]
-            executed_ids.append(decision_id)
-            executed_now += 1
-            intents_allowed += 1
-
-        else:
-            intents_skipped += 1
 
     portfolio["cash"] = round(cash, 2)
     portfolio["position_count"] = sum(
