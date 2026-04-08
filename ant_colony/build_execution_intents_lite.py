@@ -12,6 +12,8 @@ PORTFOLIO_STATE_PATH = OUT_DIR / "paper_portfolio_state.json"
 WORKER_SELECTION_PATH = OUT_DIR / "worker_strategy_selection.json"
 STRATEGY_FEEDBACK_STATE_PATH = OUT_DIR / "strategy_feedback_state.json"
 ALLOCATION_MEMORY_STATE_PATH = OUT_DIR / "allocation_memory_state.json"
+AUDIT_PATH     = OUT_DIR / "queen_allocation_audit.json"
+AUDIT_TSV_PATH = OUT_DIR / "queen_allocation_audit.tsv"
 
 # AC-40: enabled strategieën per markt
 ENABLED_STRATEGIES = ["EDGE3", "EDGE4"]
@@ -468,6 +470,153 @@ def apply_confidence_gating(market: str, alloc_map: dict, active_strategies: lis
     return alloc_map
 
 
+# === AC47: queen allocation audit trail ===
+
+def build_audit_decision_reason(sr: dict) -> str:
+    """AC47: deterministische, mens-leesbare samenvatting van allocation-beslissing."""
+    effective_action = sr.get("effective_action", "NO_ACTION")
+    allowed = bool(sr.get("allowed", False))
+    allocation_pct = to_float(sr.get("allocation_pct", 0.0))
+    final = f"FINAL_ALLOC_{allocation_pct:.6f}"
+
+    if effective_action == "ENTER_LONG":
+        parts = ["ACTIVE"]
+        conf_reason = safe_str(sr.get("confidence_gate_reason", ""))
+        if conf_reason:
+            parts.append(conf_reason)
+        bias_reason = safe_str(sr.get("allocation_bias_reason", ""))
+        if bias_reason and bias_reason not in ("NO_SIGNAL_OR_BLOCKED", ""):
+            parts.append(bias_reason)
+        if sr.get("smoothing_applied"):
+            parts.append("EMA_APPLIED")
+    elif not allowed:
+        parts = ["BLOCKED"]
+        parts.append(safe_str(sr.get("effective_reason") or sr.get("reason", "UNKNOWN")))
+    else:
+        parts = ["INACTIVE"]
+        parts.append(safe_str(sr.get("allocation_reason") or "NO_SIGNAL_OR_BLOCKED"))
+
+    parts.append(final)
+    return " | ".join(parts)
+
+
+def build_market_decision_reason(active_strategies: list, sr_map: dict) -> str:
+    """AC47: markt-niveau samenvatting van allocatiebeslissing."""
+    if not active_strategies:
+        return "NO_ACTIVE_STRATEGIES"
+    if len(active_strategies) == 1:
+        return f"SINGLE_ACTIVE_{active_strategies[0]}"
+
+    pcts = {s: to_float(sr_map.get(s, {}).get("allocation_pct", 0.0)) for s in active_strategies}
+    winner = max(pcts, key=pcts.get)
+    gap = round(pcts[winner] - min(pcts.values()), 6)
+
+    if gap < 0.05:
+        return "NEUTRAL_SPLIT"
+
+    smoothing = bool(sr_map.get(winner, {}).get("smoothing_applied", False))
+    suffix = "_AND_SMOOTHING" if smoothing else ""
+    return f"{winner}_DOMINANT_AFTER_FEEDBACK{suffix}"
+
+
+def write_queen_allocation_audit(cycle_id, now_ts: str, summary_markets: dict):
+    """AC47: schrijf queen_allocation_audit.json en .tsv."""
+    audit_markets = {}
+
+    for market in sorted(summary_markets.keys()):
+        mkt = summary_markets[market]
+        sr_map = mkt.get("strategies", {})
+        active = mkt.get("market_active_strategies", [])
+
+        pcts = {s: to_float(sr_map.get(s, {}).get("allocation_pct", 0.0)) for s in active}
+        if len(active) > 1:
+            _ranked = sorted(active, key=lambda s: pcts.get(s, 0.0), reverse=True)
+            winner, loser = _ranked[0], _ranked[-1]
+        elif active:
+            winner, loser = active[0], None
+        else:
+            winner, loser = None, None
+        alloc_sum = round(
+            sum(to_float(sr_map.get(s, {}).get("allocation_pct", 0.0)) for s in ENABLED_STRATEGIES), 6
+        )
+        gap = round((pcts.get(winner, 0.0) - pcts.get(loser, 0.0)), 6) if winner and loser else 0.0
+
+        strategy_audits = {}
+        for strategy in ENABLED_STRATEGIES:
+            sr = sr_map.get(strategy, {})
+            strategy_audits[strategy] = {
+                "position_key": f"{market}__{strategy}",
+                "signal_action": sr.get("signal_action"),
+                "signal_bias": sr.get("signal_bias"),
+                "signal_reason": sr.get("signal_reason"),
+                "signal_strength": sr.get("signal_strength"),
+                "router_bias": sr.get("router_bias"),
+                "router_bias_reason": sr.get("router_bias_reason"),
+                "execution_allowed": sr.get("allowed"),
+                "effective_action": sr.get("effective_action"),
+                "effective_reason": sr.get("effective_reason"),
+                "feedback_state_found": sr.get("feedback_state_found"),
+                "feedback_score": sr.get("feedback_score"),
+                "feedback_trade_count": sr.get("feedback_trade_count"),
+                "feedback_closed_trade_count": sr.get("feedback_closed_trade_count"),
+                "feedback_win_count": sr.get("feedback_win_count"),
+                "feedback_loss_count": sr.get("feedback_loss_count"),
+                "feedback_confidence": sr.get("feedback_confidence"),
+                "allocation_weight_raw": sr.get("allocation_weight_raw"),
+                "allocation_weight_clamped": sr.get("allocation_weight_clamped"),
+                "neutral_target_pct": sr.get("neutral_target_pct"),
+                "biased_target_pct": sr.get("biased_target_pct"),
+                "confidence_adjusted_target_pct": sr.get("confidence_adjusted_target_pct"),
+                "allocation_previous_pct": sr.get("allocation_previous_pct"),
+                "allocation_smoothed_pct": sr.get("allocation_smoothed_pct"),
+                "allocation_pct": sr.get("allocation_pct"),
+                "requested_notional_eur": sr.get("requested_notional_eur"),
+                "audit_decision_reason": build_audit_decision_reason(sr),
+            }
+
+        audit_markets[market] = {
+            "market_allocation_mode": mkt.get("market_allocation_mode"),
+            "active_strategies": active,
+            "allocation_sum": alloc_sum,
+            "winner_strategy": winner,
+            "winner_allocation_pct": pcts.get(winner) if winner else None,
+            "loser_strategy": loser,
+            "loser_allocation_pct": pcts.get(loser) if loser else None,
+            "allocation_gap": gap,
+            "market_decision_reason": build_market_decision_reason(active, sr_map),
+            "strategies": strategy_audits,
+        }
+
+    audit = {
+        "component": "queen_allocation_audit",
+        "ts_utc": now_ts,
+        "cycle_id": cycle_id,
+        "markets_total": len(audit_markets),
+        "markets": audit_markets,
+    }
+    AUDIT_PATH.write_text(json.dumps(audit, indent=2), encoding="utf-8")
+
+    # TSV: één rij per position_key per cycle
+    tsv_headers = [
+        "market", "strategy", "position_key", "effective_action",
+        "feedback_confidence", "biased_target_pct", "confidence_adjusted_target_pct",
+        "allocation_smoothed_pct", "allocation_pct", "audit_decision_reason",
+    ]
+    tsv_rows = []
+    for market, mkt_audit in sorted(audit_markets.items()):
+        for strategy in ENABLED_STRATEGIES:
+            sa = mkt_audit["strategies"].get(strategy, {})
+            row = {h: safe_str(sa.get(h, "")) for h in tsv_headers}
+            row["market"] = market
+            row["strategy"] = strategy
+            tsv_rows.append(row)
+
+    lines = ["\t".join(tsv_headers)]
+    for row in tsv_rows:
+        lines.append("\t".join(row.get(h, "") for h in tsv_headers))
+    AUDIT_TSV_PATH.write_text("\n".join(lines), encoding="utf-8")
+
+
 def main():
     combined, combined_err = load_json(COMBINED_STATUS_PATH)
     portfolio_summary = load_portfolio_summary()
@@ -752,6 +901,7 @@ def main():
                 "signal_overridden": ev["signal_overridden"],
                 "feedback_state_found": alloc["feedback_state_found"],
                 "feedback_score": alloc["feedback_score"],
+                "feedback_trade_count": alloc["feedback_trade_count"],
                 "feedback_closed_trade_count": alloc["feedback_closed_trade_count"],
                 "feedback_win_count": alloc["feedback_win_count"],
                 "feedback_loss_count": alloc["feedback_loss_count"],
@@ -869,6 +1019,13 @@ def main():
 
     OUT_SUMMARY_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"WROTE {OUT_SUMMARY_PATH}")
+
+    # === AC47: queen allocation audit trail ===
+    try:
+        write_queen_allocation_audit(cycle_id, now_ts, summary_markets)
+        print(f"WROTE {AUDIT_PATH}")
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
