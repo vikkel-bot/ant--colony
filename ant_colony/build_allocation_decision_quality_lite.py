@@ -1,13 +1,15 @@
 """
-AC56: Decision Quality Gate for Allocation and Rebalance
+AC56+AC62: Decision Quality Gate for Allocation and Rebalance
 Pure observability + scoring layer. No execution, no orders, no state changes.
 
 Sits after rebalance budget audit (AC55), before any future execution transition.
+AC62 wires AC-61 conviction modifier into conviction scoring (conservative).
 
 Reads:
-  allocation_portfolio_drift.json   — drift, severity, cause, actual/target per position
-  rebalance_intents.json            — rebalance action, delta, budget selection per intent
-  execution_summary.json            — feedback_confidence, regime_type per strategy (AC46+AC48)
+  allocation_portfolio_drift.json         — drift, severity, cause, actual/target per position
+  rebalance_intents.json                  — rebalance action, delta, budget selection per intent
+  execution_summary.json                  — feedback_confidence, regime_type per strategy (AC46+AC48)
+  allocation_feedback_integration.json    — conviction modifier per strategy_key (AC61, optional)
 
 Writes:
   allocation_decision_quality.json
@@ -19,6 +21,11 @@ Score components:
   budget_ok_score          (weight 0.10) — is the intent budget-approved?
   regime_compat_score      (weight 0.15) — does regime support this direction?
   churn_penalty            (weight 0.20) — penalty for high-turnover changes
+
+AC62 conviction modifier (fail-closed):
+  effective_feedback_confidence = base_feedback_confidence × modifier
+  modifier from AC61 per strategy_key (default 1.00 if missing/fallback)
+  modifier band: [0.90, 1.05] — cannot dominate base conviction
 
 Gate (fail-closed):
   PASS  score >= 0.55 AND budget selected AND drift material
@@ -37,6 +44,7 @@ OUT_DIR = Path(r"C:\Trading\ANT_OUT")
 DRIFT_PATH        = OUT_DIR / "allocation_portfolio_drift.json"
 REBALANCE_PATH    = OUT_DIR / "rebalance_intents.json"
 EXEC_SUMMARY_PATH = OUT_DIR / "execution_summary.json"
+FEEDBACK_PATH     = OUT_DIR / "allocation_feedback_integration.json"   # AC61
 
 OUT_PATH     = OUT_DIR / "allocation_decision_quality.json"
 OUT_TSV_PATH = OUT_DIR / "allocation_decision_quality.tsv"
@@ -44,12 +52,20 @@ OUT_TSV_PATH = OUT_DIR / "allocation_decision_quality.tsv"
 TSV_HEADERS = [
     "market", "strategy", "position_key",
     "drift_pct", "drift_severity", "rebalance_action",
+    "base_feedback_confidence", "allocation_conviction_modifier",
+    "effective_feedback_confidence", "feedback_modifier_applied",
     "drift_materiality_score", "conviction_score", "churn_penalty",
     "decision_quality_score", "decision_quality_gate",
     "decision_quality_reasons",
 ]
 
-VERSION = "decision_quality_v1"
+VERSION = "decision_quality_v2"  # bumped for AC62 conviction modifier wiring
+
+# AC62: hard bounds on modifier effect — prevents any single feedback record
+# from dominating the conviction score
+MODIFIER_MIN = 0.90
+MODIFIER_MAX = 1.05
+MODIFIER_NEUTRAL = 1.00
 
 # Score weights (must sum to ≤ 1.0 for positive terms)
 W_DRIFT      = 0.40
@@ -123,6 +139,79 @@ def write_tsv(path: Path, headers: list, rows: list):
             for h in headers
         ))
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# AC62: Conviction modifier helpers (importable for tests)
+# ---------------------------------------------------------------------------
+
+def load_feedback_index(path: Path) -> dict:
+    """
+    Load AC61 allocation_feedback_integration.json and return an index
+    keyed by strategy_key. Returns empty dict on missing/broken file (fail-closed).
+    """
+    data = load_json(path, {})
+    if not data or not isinstance(data, dict):
+        return {}
+    index = {}
+    for rec in (data.get("records") or []):
+        sk = str(rec.get("strategy_key") or "").strip()
+        if sk:
+            index[sk] = rec
+    return index
+
+
+def apply_conviction_modifier(
+    base_feedback_confidence: float,
+    strategy_key: str,
+    feedback_index: dict,
+) -> tuple:
+    """
+    Apply AC61 conviction modifier to base_feedback_confidence.
+
+    Returns (effective_confidence, modifier, bias_class, feedback_status,
+             cooldown_flag, modifier_applied, modifier_reason).
+
+    Fail-closed: if strategy_key not in index, returns (base, 1.00, ...).
+    Modifier is hard-clamped to [MODIFIER_MIN, MODIFIER_MAX] regardless of
+    AC61 values, preventing any single feedback record from dominating.
+    """
+    fb_rec = feedback_index.get(strategy_key)
+
+    if fb_rec is None:
+        return (
+            round(max(0.0, min(1.0, base_feedback_confidence)), 4),
+            MODIFIER_NEUTRAL,
+            "NEUTRAL",
+            "NO_FEEDBACK_DATA",
+            False,
+            False,
+            "FALLBACK_NO_AC61_RECORD",
+        )
+
+    raw_modifier   = to_float(fb_rec.get("allocation_conviction_modifier", MODIFIER_NEUTRAL))
+    modifier       = round(max(MODIFIER_MIN, min(MODIFIER_MAX, raw_modifier)), 4)
+    bias_class     = str(fb_rec.get("allocation_bias_class") or "NEUTRAL")
+    feedback_status = str(fb_rec.get("feedback_status") or "UNKNOWN")
+    cooldown_flag  = bool(fb_rec.get("cooldown_flag", False))
+
+    effective_conf = round(max(0.0, min(1.0, base_feedback_confidence * modifier)), 4)
+    modifier_applied = (modifier != MODIFIER_NEUTRAL)
+    modifier_reason = (
+        f"AC61_{bias_class}_MOD_{modifier}"
+        if modifier_applied
+        else "AC61_NEUTRAL_MOD_1.00"
+    )
+
+    return (
+        effective_conf,
+        modifier,
+        bias_class,
+        feedback_status,
+        cooldown_flag,
+        modifier_applied,
+        modifier_reason,
+    )
 
 
 def score_drift_materiality(drift_pct: float) -> tuple:
@@ -275,6 +364,9 @@ def main():
     rebal_data    = load_json(REBALANCE_PATH, {}) or {}
     exec_summary  = load_json(EXEC_SUMMARY_PATH, {}) or {}
 
+    # AC62: load AC61 feedback integration (fail-closed: empty dict if missing)
+    feedback_index = load_feedback_index(FEEDBACK_PATH)
+
     cycle_id  = drift_data.get("cycle_id") or rebal_data.get("cycle_id")
     equity    = to_float(drift_data.get("equity", 0.0))
 
@@ -300,9 +392,15 @@ def main():
             exec_index[pk] = sr or {}
 
     # Build quality records for every candidate that has a rebalance intent
-    # (only MEDIUM/HIGH drift rows with an actual rebalance action)
     records    = []
     gate_counts = {"PASS": 0, "HOLD": 0, "BLOCK": 0}
+
+    # AC62: counters for modifier summary
+    mod_applied_count    = 0
+    mod_neutral_fallback = 0
+    mod_positive_count   = 0
+    mod_negative_count   = 0
+    mod_caution_count    = 0
 
     for pk, intent in sorted(rebal_index.items()):
         drift_row = drift_index.get(pk) or {}
@@ -322,15 +420,34 @@ def main():
         alloc_pct       = to_float(drift_row.get("allocation_pct", 0.0))
 
         # From execution_summary (fail-safe defaults)
-        feedback_conf   = to_float(exec_sr.get("feedback_confidence", 0.0))
-        regime_type     = str(exec_sr.get("regime_type") or
-                              drift_row.get("regime_type") or "UNKNOWN")
+        base_feedback_conf = to_float(exec_sr.get("feedback_confidence", 0.0))
+        regime_type        = str(exec_sr.get("regime_type") or
+                                  drift_row.get("regime_type") or "UNKNOWN")
 
-        # --- Score components ---
-        drift_mat_score, drift_mat_reason = score_drift_materiality(drift_pct)
-        conviction_score, conviction_reason = score_conviction(feedback_conf, regime_type)
-        regime_score, regime_reason = score_regime_compat(regime_type)
-        churn_pen, churn_reason = score_churn(delta_eur, actual_eur, target_eur)
+        # AC62: apply conviction modifier from AC61 feedback integration
+        (effective_conf, modifier, bias_class,
+         fb_status, cooldown_flag,
+         modifier_applied, modifier_reason) = apply_conviction_modifier(
+            base_feedback_conf, pk, feedback_index
+        )
+
+        # Track modifier summary counts
+        if modifier_applied:
+            mod_applied_count += 1
+            if "POSITIVE" in bias_class:
+                mod_positive_count += 1
+            elif "CAUTION" in bias_class:
+                mod_caution_count += 1
+            elif "NEGATIVE" in bias_class:
+                mod_negative_count += 1
+        else:
+            mod_neutral_fallback += 1
+
+        # --- Score components (conviction uses effective_conf, not raw) ---
+        drift_mat_score, drift_mat_reason   = score_drift_materiality(drift_pct)
+        conviction_score, conviction_reason = score_conviction(effective_conf, regime_type)
+        regime_score, regime_reason         = score_regime_compat(regime_type)
+        churn_pen, churn_reason             = score_churn(delta_eur, actual_eur, target_eur)
         budget_ok_score = 1.0 if rebal_selected else 0.0
 
         quality_score = compute_quality_score(
@@ -341,6 +458,8 @@ def main():
         component_reasons = [
             drift_mat_reason, conviction_reason, regime_reason, churn_reason,
         ]
+        if modifier_applied:
+            component_reasons.append(modifier_reason)
         gate, gate_reasons = determine_gate(
             quality_score, rebal_selected, drift_pct,
             drift_mat_score, component_reasons,
@@ -356,17 +475,27 @@ def main():
             "cycle_id":       cycle_id,
             # Inputs
             "current_weight":       alloc_pct,
-            "target_weight":        alloc_pct,   # allocation_pct is the queen's current target
+            "target_weight":        alloc_pct,
             "drift_pct":            drift_pct,
             "drift_severity":       drift_severity,
             "drift_cause":          drift_row.get("drift_cause"),
             "rebalance_action":     rebal_action,
             "rebalance_selected":   rebal_selected,
-            "feedback_confidence":  feedback_conf,
             "regime_type":          regime_type,
             "actual_notional_eur":  actual_eur,
             "target_notional_eur":  target_eur,
             "rebalance_delta_eur":  delta_eur,
+            # AC62: conviction modifier audit trail
+            "base_feedback_confidence":       base_feedback_conf,
+            "allocation_conviction_modifier": modifier,
+            "effective_feedback_confidence":  effective_conf,
+            "allocation_bias_class":          bias_class,
+            "feedback_status":                fb_status,
+            "cooldown_flag":                  cooldown_flag,
+            "feedback_modifier_applied":      modifier_applied,
+            "feedback_modifier_reason":       modifier_reason,
+            # legacy field alias for compatibility
+            "feedback_confidence":            effective_conf,
             # Score components
             "drift_materiality_score":  drift_mat_score,
             "conviction_score":         conviction_score,
@@ -379,8 +508,8 @@ def main():
             "decision_quality_reasons": "|".join(gate_reasons),
         })
 
-    pass_count = gate_counts.get("PASS", 0)
-    hold_count = gate_counts.get("HOLD", 0)
+    pass_count  = gate_counts.get("PASS", 0)
+    hold_count  = gate_counts.get("HOLD", 0)
     block_count = gate_counts.get("BLOCK", 0)
 
     out = {
@@ -405,6 +534,14 @@ def main():
             "pass_min": GATE_PASS_MIN,
             "hold_min": GATE_HOLD_MIN,
         },
+        # AC62: modifier summary
+        "feedback_modifier_records_total":        len(records),
+        "feedback_modifier_applied_count":        mod_applied_count,
+        "feedback_modifier_neutral_fallback_count": mod_neutral_fallback,
+        "feedback_modifier_positive_count":       mod_positive_count,
+        "feedback_modifier_negative_count":       mod_negative_count,
+        "feedback_modifier_caution_count":        mod_caution_count,
+        "source_feedback_keys":                   len(feedback_index),
         "source_drift_rows":   len(drift_index),
         "source_rebal_intents": len(rebal_index),
         "source_exec_strategies": len(exec_index),
