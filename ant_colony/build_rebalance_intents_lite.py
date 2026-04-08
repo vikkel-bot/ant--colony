@@ -38,8 +38,10 @@ OUT_DIR = Path(r"C:\Trading\ANT_OUT")
 DRIFT_PATH       = OUT_DIR / "allocation_portfolio_drift.json"
 PORTFOLIO_PATH   = OUT_DIR / "paper_portfolio_state.json"
 
-OUT_PATH     = OUT_DIR / "rebalance_intents.json"
-OUT_TSV_PATH = OUT_DIR / "rebalance_intents.tsv"
+OUT_PATH       = OUT_DIR / "rebalance_intents.json"
+OUT_TSV_PATH   = OUT_DIR / "rebalance_intents.tsv"
+AUDIT_PATH     = OUT_DIR / "rebalance_budget_audit.json"
+AUDIT_TSV_PATH = OUT_DIR / "rebalance_budget_audit.tsv"
 
 TSV_HEADERS = [
     "market", "strategy", "position_key",
@@ -48,6 +50,13 @@ TSV_HEADERS = [
     "rebalance_delta_eur", "rebalance_capped_delta_eur",
     "rebalance_cap_applied", "rebalance_reason",
     "rebalance_selected", "rebalance_budget_reason",
+]
+
+AUDIT_TSV_HEADERS = [
+    "market", "strategy", "position_key",
+    "drift_severity", "drift_pct", "rebalance_action",
+    "rebalance_capped_delta_eur", "priority_rank",
+    "rebalance_selected", "rebalance_budget_reason", "audit_decision_reason",
 ]
 
 MAX_REBALANCE_PCT_PER_CYCLE  = 0.25  # per-intent cap (AC53)
@@ -91,6 +100,35 @@ def to_float(v, default=0.0):
 
 def write_json(path: Path, obj):
     path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+
+
+def build_audit_decision_reason(intent: dict) -> str:
+    """AC55: compact human-readable explanation of budget decision per intent."""
+    sel   = intent.get("rebalance_selected", False)
+    sev   = intent.get("drift_severity", "?")
+    pct   = to_float(intent.get("drift_pct", 0.0))
+    delta = to_float(intent.get("rebalance_capped_delta_eur", 0.0))
+    if sel:
+        return f"SELECTED | {sev} | DRIFT_{pct:.6f} | DELTA_{delta:.2f} | WITHIN_BUDGET"
+    return f"EXCLUDED | {sev} | DRIFT_{pct:.6f} | DELTA_{delta:.2f} | BUDGET_LIMIT"
+
+
+def build_audit_summary_reason(selected_count: int, excluded_count: int, intents: list) -> str:
+    """AC55: single-string cycle-level explanation of budget outcome."""
+    if not intents:
+        return "NO_REBALANCE_CANDIDATES"
+    if excluded_count == 0:
+        return "ALL_CANDIDATES_FIT_WITHIN_BUDGET"
+    if selected_count == 1:
+        return "ONLY_HIGHEST_PRIORITY_INTENT_FIT_WITHIN_BUDGET"
+    med_total    = sum(1 for i in intents if i.get("drift_severity") == "MEDIUM")
+    med_selected = sum(1 for i in intents
+                       if i.get("rebalance_selected") and i.get("drift_severity") == "MEDIUM")
+    high_selected = sum(1 for i in intents
+                        if i.get("rebalance_selected") and i.get("drift_severity") == "HIGH")
+    if med_total > 0 and med_selected == 0 and high_selected > 0:
+        return "HIGH_PRIORITY_CONSUMED_BUDGET"
+    return "PARTIAL_BUDGET_UTILIZATION"
 
 
 def write_tsv(path: Path, headers: list, rows: list):
@@ -207,25 +245,45 @@ def main():
         -abs(to_float(i.get("drift_pct", 0.0))),
     ))
 
+    # AC55: assign priority_rank after sort
+    for rank, intent in enumerate(intents, 1):
+        intent["priority_rank"] = rank
+
     running_sum    = 0.0
     selected_count = 0
     excluded_count = 0
+    selection_seq  = 0
 
     for intent in intents:
         abs_delta = abs(to_float(intent.get("rebalance_capped_delta_eur", 0.0)))
+        before = round(running_sum, 2)
+
         if portfolio_budget <= 0.0:
             intent["rebalance_selected"]      = False
             intent["rebalance_budget_reason"] = "EXCLUDED_BUDGET_LIMIT"
+            intent["selection_order"]         = None
             excluded_count += 1
         elif running_sum + abs_delta <= portfolio_budget:
+            selection_seq += 1
             intent["rebalance_selected"]      = True
             intent["rebalance_budget_reason"] = "SELECTED_WITHIN_BUDGET"
+            intent["selection_order"]         = selection_seq
             running_sum = round(running_sum + abs_delta, 2)
             selected_count += 1
         else:
             intent["rebalance_selected"]      = False
             intent["rebalance_budget_reason"] = "EXCLUDED_BUDGET_LIMIT"
+            intent["selection_order"]         = None
             excluded_count += 1
+
+        after = round(running_sum, 2)
+        intent["budget_running_before_eur"]   = before
+        intent["budget_running_after_eur"]    = after
+        intent["budget_remaining_after_eur"]  = round(portfolio_budget - after, 2)
+
+    # AC55: build audit_decision_reason for every intent
+    for intent in intents:
+        intent["audit_decision_reason"] = build_audit_decision_reason(intent)
 
     utilization_pct = round(running_sum / max(portfolio_budget, 1.0), 4)
 
@@ -260,6 +318,61 @@ def main():
 
     write_json(OUT_PATH, out)
     write_tsv(OUT_TSV_PATH, TSV_HEADERS, intents)
+
+    # === AC55: rebalance budget audit trail ===
+    try:
+        high_cand  = sum(1 for i in intents if i.get("drift_severity") == "HIGH")
+        med_cand   = sum(1 for i in intents if i.get("drift_severity") == "MEDIUM")
+        high_sel   = sum(1 for i in intents if i.get("rebalance_selected") and i.get("drift_severity") == "HIGH")
+        med_sel    = sum(1 for i in intents if i.get("rebalance_selected") and i.get("drift_severity") == "MEDIUM")
+        sel_eur    = round(sum(abs(to_float(i.get("rebalance_capped_delta_eur", 0))) for i in intents if i.get("rebalance_selected")), 2)
+        excl_eur   = round(sum(abs(to_float(i.get("rebalance_capped_delta_eur", 0))) for i in intents if not i.get("rebalance_selected")), 2)
+        lg_sel     = max((i for i in intents if i.get("rebalance_selected")),
+                         key=lambda i: abs(to_float(i.get("rebalance_capped_delta_eur", 0))), default=None)
+        lg_excl    = max((i for i in intents if not i.get("rebalance_selected")),
+                         key=lambda i: abs(to_float(i.get("rebalance_capped_delta_eur", 0))), default=None)
+
+        audit_rows = [
+            {k: i.get(k) for k in (
+                "market", "strategy", "position_key", "drift_status", "drift_severity",
+                "drift_pct", "rebalance_action", "rebalance_delta_eur",
+                "rebalance_capped_delta_eur", "priority_rank", "selection_order",
+                "rebalance_selected", "rebalance_budget_reason",
+                "budget_running_before_eur", "budget_running_after_eur",
+                "budget_remaining_after_eur", "audit_decision_reason",
+            )}
+            for i in intents
+        ]
+
+        audit = {
+            "component": "rebalance_budget_audit",
+            "ts_utc": ts,
+            "cycle_id": cycle_id,
+            "equity": equity,
+            "portfolio_rebalance_budget_eur": portfolio_budget,
+            "portfolio_rebalance_used_eur": round(running_sum, 2),
+            "portfolio_rebalance_utilization_pct": utilization_pct,
+            "candidate_count": len(intents),
+            "selected_count": selected_count,
+            "excluded_count": excluded_count,
+            "selection_mode": "GREEDY_SEVERITY_THEN_DRIFT",
+            "summary": {
+                "high_candidates": high_cand,
+                "medium_candidates": med_cand,
+                "high_selected": high_sel,
+                "medium_selected": med_sel,
+                "total_selected_abs_eur": sel_eur,
+                "total_excluded_abs_eur": excl_eur,
+                "largest_selected_position_key": lg_sel["position_key"] if lg_sel else None,
+                "largest_excluded_position_key": lg_excl["position_key"] if lg_excl else None,
+                "audit_summary_reason": build_audit_summary_reason(selected_count, excluded_count, intents),
+            },
+            "rows": audit_rows,
+        }
+        write_json(AUDIT_PATH, audit)
+        write_tsv(AUDIT_TSV_PATH, AUDIT_TSV_HEADERS, audit_rows)
+    except Exception:
+        pass  # audit must not crash main rebalance write
 
     print(json.dumps({k: v for k, v in out.items() if k != "intents"}, indent=2))
 
