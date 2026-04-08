@@ -282,13 +282,22 @@ def main():
             if not allowed:
                 action = "NO_ACTION"
 
-            # AC41.2: primary_block_reason consistent met finale block_reason
-            if reason and safe_str(reason) not in ("ALLOW", ""):
-                primary_block_reason = safe_str(reason)
+            # AC42.1: effective fields — finale execution state, gescheiden van signal
+            effective_action = action
+            effective_reason = safe_str(reason, "ALLOW")
+            signal_overridden = (
+                override_applied
+                or freshness_block
+                or (not allowed and sig["signal_action"] == "ENTER_LONG")
+            )
+
+            # AC42.1: primary_block_reason volgt finale execution state, nooit UNKNOWN
+            if effective_reason not in ("ALLOW", ""):
+                primary_block_reason = effective_reason
             elif guard_blockers:
                 primary_block_reason = guard_blockers[0]
             else:
-                primary_block_reason = safe_str(reason, "UNKNOWN")
+                primary_block_reason = "ALLOW"
 
             position_key = f"{market}__{strategy}"
             decision_id = f"{position_key}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"
@@ -311,15 +320,18 @@ def main():
                 "market": market,
                 "position_key": position_key,
                 "decision_id": decision_id,
-                "action": action,
+                "action": effective_action,
                 "strategy": strategy,
-                "bias": "LONG" if action == "ENTER_LONG" else "NEUTRAL",
+                "bias": sig["signal_bias"],
                 "signal_action": sig["signal_action"],
                 "signal_bias": sig["signal_bias"],
                 "signal_reason": sig["signal_reason"],
                 "signal_strength": sig["signal_strength"],
                 "router_bias": bias_info["router_bias"],
                 "router_bias_reason": bias_info["router_bias_reason"],
+                "effective_action": effective_action,
+                "effective_reason": effective_reason,
+                "signal_overridden": signal_overridden,
                 "size_mult": size_mult,
                 "allocation_pct": allocation_pct,
                 "allocation_reason": allocation_reason,
@@ -353,14 +365,17 @@ def main():
 
             strategy_results[strategy] = {
                 "allowed": allowed,
-                "action": action,
-                "reason": reason,
+                "action": effective_action,
+                "reason": effective_reason,
                 "signal_action": sig["signal_action"],
                 "signal_bias": sig["signal_bias"],
                 "signal_reason": sig["signal_reason"],
                 "signal_strength": sig["signal_strength"],
                 "router_bias": bias_info["router_bias"],
                 "router_bias_reason": bias_info["router_bias_reason"],
+                "effective_action": effective_action,
+                "effective_reason": effective_reason,
+                "signal_overridden": signal_overridden,
                 "allocation_pct": allocation_pct,
                 "allocation_reason": allocation_reason,
                 "requested_notional_eur": requested_notional_eur,
