@@ -247,9 +247,9 @@ def main():
             continue
 
         # Fail-closed: cash check na EXIT_LONG mutaties
+        # AC41.2: geen extra budget_limited_count hier — al geteld in scaling fase
         if cash < granted:
             intents_skipped += 1
-            budget_limited_count += 1
             continue
 
         size = round(granted / price, 10)

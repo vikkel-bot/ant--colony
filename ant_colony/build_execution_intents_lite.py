@@ -254,8 +254,13 @@ def main():
             if not allowed:
                 action = "NO_ACTION"
 
-            # AC41.1: primary_block_reason NA alle mutaties (override, freshness)
-            primary_block_reason = guard_blockers[0] if guard_blockers else safe_str(reason, "UNKNOWN")
+            # AC41.2: primary_block_reason consistent met finale block_reason
+            if reason and safe_str(reason) not in ("ALLOW", ""):
+                primary_block_reason = safe_str(reason)
+            elif guard_blockers:
+                primary_block_reason = guard_blockers[0]
+            else:
+                primary_block_reason = safe_str(reason, "UNKNOWN")
 
             position_key = f"{market}__{strategy}"
             decision_id = f"{position_key}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"
