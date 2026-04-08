@@ -270,6 +270,8 @@ def main():
         append_jsonl(EXECUTION_LOG_PATH, {
             "ts_utc": ts,
             "market": market,
+            "position_key": position_key,
+            "strategy": c["strategy"],
             "action": "ENTER_LONG",
             "decision_id": decision_id,
             "price": price,

@@ -763,8 +763,9 @@ def main():
 
     if combined_err or not isinstance(combined, dict):
         summary = {
-            "version": "execution_summary_v13",
+            "version": "execution_summary_v14",
             "ts_utc": now_ts,
+            "cycle_id": None,
             "source_component": "build_execution_intents_lite",
             "combined_status_ok": False,
             "combined_status_error": combined_err,
@@ -1148,8 +1149,9 @@ def main():
         pass
 
     summary = {
-        "version": "execution_summary_v13",
+        "version": "execution_summary_v14",
         "ts_utc": now_ts,
+        "cycle_id": cycle_id,
         "source_component": "build_execution_intents_lite",
         "combined_status_ok": True,
         "combined_status_error": None,
