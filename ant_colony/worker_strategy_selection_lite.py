@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
@@ -124,7 +124,7 @@ def norm_gate(value, default="ALLOW"):
 def select_for_market(market: str, router_row: dict, combined_row: dict) -> dict:
     active_strategy = str(first_present(router_row, ["active_strategy"], "NONE") or "NONE").upper()
     route_bias = str(first_present(router_row, ["route_bias", "final_bias", "colony_bias"], "NEUTRAL") or "NEUTRAL").upper()
-    route_conf = to_float(first_present(router_row, ["route_confidence", "final_confidence", "colony_confidence"], 0.0), 0.0)
+    route_conf = to_float(first_present(router_row, ["strategy_conf", "colony_conf"], 0.0), 0.0)
     route_reason = str(first_present(router_row, ["route_reason", "final_reason"], "NO_ROUTE_REASON") or "NO_ROUTE_REASON")
 
     combined_gate = norm_gate(first_present(combined_row, ["gate"], "ALLOW"), "ALLOW")

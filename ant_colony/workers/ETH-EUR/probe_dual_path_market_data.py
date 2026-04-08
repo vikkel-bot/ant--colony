@@ -20,7 +20,7 @@ def main() -> int:
     ANT_OUT.mkdir(parents=True, exist_ok=True)
 
     result = get_worker_market_data(
-        market="BTC-EUR",
+        market="ETH-EUR",
         interval="4h",
         limit=50,
     )
@@ -34,7 +34,7 @@ def main() -> int:
 
     probe = {
         "ts_utc": utc_now(),
-        "market": "BTC-EUR",
+        "market": "ETH-EUR",
         "interval": "4h",
         "probe_mode": "adapter_source_of_truth",
         "adapter_ok": adapter_ok,
@@ -45,10 +45,10 @@ def main() -> int:
         "error": None if adapter_ok else "INSUFFICIENT_ADAPTER_ROWS",
     }
 
-    print("=== BTC ADAPTER SOURCE PROBE ===")
+    print("=== ETH ADAPTER SOURCE PROBE ===")
     print(json.dumps(probe, indent=2))
 
-    out_path = ANT_OUT / "btc_worker_dual_path_probe.json"
+    out_path = ANT_OUT / "eth_worker_dual_path_probe.json"
     out_path.write_text(json.dumps(probe, indent=2), encoding="utf-8")
     print(f"WROTE {out_path}")
 
@@ -60,12 +60,12 @@ def main() -> int:
         "parity_ok": adapter_ok,
         "latency_ms": meta.get("latency_ms"),
         "adapter_source": "bitvavo_adapter",
-        "market": "BTC-EUR",
+        "market": "ETH-EUR",
         "interval": "4h",
         "error": probe["error"],
     }
 
-    status_path = ANT_OUT / "btc_worker_adapter_probe_status.json"
+    status_path = ANT_OUT / "eth_worker_adapter_probe_status.json"
     status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
     print(f"WROTE {status_path}")
 
@@ -74,3 +74,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

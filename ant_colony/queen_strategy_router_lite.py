@@ -1,4 +1,4 @@
-import json
+﻿import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -95,7 +95,7 @@ def choose_route(trend, edge3_gate, edge4_state, edge4_bias, colony_bias, colony
 
     edge4_active = edge4_state == "ok" and edge4_bias in ("LONG", "SHORT")
 
-    if trend == "SIDEWAYS" and edge4_active:
+    if edge4_active and colony_conf >= 0.30:
         chosen = {
             "active_strategy": "EDGE4",
             "strategy_bias": edge4_bias,
@@ -229,3 +229,4 @@ print(json.dumps({
     "markets": len(rows),
     "version": result["version"],
 }, indent=2))
+

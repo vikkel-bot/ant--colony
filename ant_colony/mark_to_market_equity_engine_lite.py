@@ -134,7 +134,16 @@ def main():
     last_price_map = {}
     price_issues = []
 
-    for market, pos in positions.items():
+    for position_key, pos in positions.items():
+
+        if not isinstance(position_key, str):
+            continue
+
+        # split strategy-aware key → base market
+        if "__" in position_key:
+            market = position_key.split("__")[0]
+        else:
+            market = position_key
         if not isinstance(pos, dict):
             continue
 
@@ -154,7 +163,7 @@ def main():
         price_age_s = age_seconds(now_utc, price_ts)
         price_freshness_ok = (price_age_s is not None) and (price_age_s <= MAX_PRICE_AGE_SECONDS)
 
-        row = portfolio_positions.get(market, {}) or {}
+        row = portfolio_positions.get(position_key, {}) or {}
         row["mark_to_market_ts"] = ts
         row["price_ts"] = price_ts
         row["price_source"] = price_source
@@ -171,11 +180,11 @@ def main():
             row["market_value"] = None
             row["unrealized_pnl"] = None
             row["mtm_state"] = "UNPRICED"
-            portfolio_positions[market] = row
+            portfolio_positions[position_key] = row
             continue
 
         priced_positions += 1
-        last_price_map[market] = mark_price
+        last_price_map[position_key] = mark_price
 
         market_value = round(size * mark_price, 2)
         unrealized_pnl = round(size * (mark_price - entry_price), 2)
@@ -202,7 +211,7 @@ def main():
             })
             row["mtm_state"] = "PRICED_STALE"
 
-        portfolio_positions[market] = row
+        portfolio_positions[position_key] = row
 
     positions_market_value = round(positions_market_value, 2)
     total_unrealized_pnl = round(total_unrealized_pnl, 2)
@@ -300,6 +309,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

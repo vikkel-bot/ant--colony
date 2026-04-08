@@ -117,7 +117,7 @@ def infer_natural_intent(market, market_row, selection_row):
     reason = "NO_STRATEGY_SIGNAL"
 
     if selected_strategy in ("EDGE3", "EDGE4") and selected_bias == "LONG":
-        if edge3_gate == "ALLOW" and health_gate == "ALLOW":
+        if (selected_strategy == "EDGE3" and edge3_gate == "ALLOW" and health_gate == "ALLOW") or (selected_strategy == "EDGE4" and health_gate == "ALLOW"):
             action = "ENTER_LONG"
             strategy = selected_strategy
             bias = "LONG"
@@ -205,6 +205,16 @@ def main():
         allowed = bool(readiness.get("allowed", False))
         reason = readiness.get("reason")
         guard_blockers = derive_guard_blockers(readiness)
+
+        # AC39: EDGE4 is not blocked by EDGE3 gate
+        if strategy == "EDGE4":
+            guard_blockers = [b for b in guard_blockers if not str(b).startswith("EDGE3_")]
+            if safe_str(reason) == "GATE_BLOCKED" and safe_str(readiness.get("health_gate")) == "ALLOW":
+                allowed = True
+                reason = "ALLOW"
+                readiness["allowed"] = True
+                readiness["reason"] = "ALLOW"
+
         primary_block_reason = guard_blockers[0] if len(guard_blockers) > 0 else safe_str(reason, "UNKNOWN")
         override_applied = False
 
@@ -313,12 +323,42 @@ def main():
         "markets": summary_markets,
     }
 
+    # === AC38 SIGNAL VISIBILITY (SAFE DEBUG) ===
+    try:
+        visibility = {}
+        for mkt in sorted(markets.keys()):
+            m = markets.get(mkt, {}) or {}
+            sel = worker_selection_map.get(mkt, {}) or {}
+
+            visibility[mkt] = {
+                "selected_strategy": sel.get("selected_strategy"),
+                "selected_bias": sel.get("selected_bias"),
+                "selection_reason": sel.get("selection_reason"),
+                "edge3_gate": (m.get("edge3") or {}).get("gate"),
+                "health_gate": (m.get("health") or {}).get("health_gate"),
+                "allowed": (m.get("execution_readiness") or {}).get("allowed"),
+                "reason": (m.get("execution_readiness") or {}).get("reason"),
+            }
+
+        (OUT_DIR / "signal_visibility.json").write_text(
+            json.dumps(visibility, indent=2),
+            encoding="utf-8"
+        )
+    except Exception:
+        pass
     OUT_SUMMARY_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"WROTE {OUT_SUMMARY_PATH}")
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
 
 
 

@@ -89,6 +89,8 @@ def main():
 
         intent = load_json(Path(intent_file), {})
         decision_id = str(intent.get("decision_id", ""))
+        strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
+        position_key = f"{market}__{strategy}"
 
         if not decision_id or decision_id in executed_ids:
             intents_skipped += 1
@@ -111,7 +113,7 @@ def main():
 
             size = round(notional / price, 10)
 
-            positions[market] = {
+            positions[position_key] = {
                 "position": "LONG",
                 "size": size,
                 "entry_price": price,
@@ -121,7 +123,7 @@ def main():
                 "notional_eur": notional
             }
 
-            portfolio["positions"][market] = positions[market]
+            portfolio["positions"][position_key] = positions[position_key]
             cash = round(cash - notional, 2)
 
             append_jsonl(EXECUTION_LOG_PATH, {
@@ -140,7 +142,9 @@ def main():
             intents_allowed += 1
 
         elif action == "EXIT_LONG":
-            pos = positions.get(market) or portfolio["positions"].get(market) or {}
+            strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
+            position_key = f"{market}__{strategy}"
+            pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
             if str(pos.get("position", "FLAT")).upper() != "LONG":
                 intents_skipped += 1
                 continue
@@ -169,7 +173,7 @@ def main():
                 "reason": reason
             })
 
-            positions[market] = {
+            positions[position_key] = {
                 "position": "FLAT",
                 "size": 0.0,
                 "entry_price": 0.0,
@@ -182,7 +186,7 @@ def main():
                 "realized_pnl": realized_pnl
             }
 
-            portfolio["positions"][market] = positions[market]
+            portfolio["positions"][position_key] = positions[position_key]
             executed_ids.append(decision_id)
             executed_now += 1
             intents_allowed += 1
@@ -229,3 +233,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
