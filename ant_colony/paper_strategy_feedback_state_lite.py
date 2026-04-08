@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -101,10 +101,6 @@ def build_strategy_maps(execution_rows):
 
 
 def extract_execution_id_from_trade_id(trade_id: str) -> str:
-    """
-    Verwacht trade_id zoals:
-    BTC-EUR|BTC-EUR_20260324T164735Z
-    """
     if not trade_id or "|" not in trade_id:
         return ""
     return str(trade_id.split("|", 1)[1]).strip()
@@ -132,6 +128,29 @@ def resolve_strategy(row, decision_to_strategy, execution_to_strategy, market_to
     return "UNKNOWN"
 
 
+def resolve_position_key(row, decision_to_strategy, execution_to_strategy, market_to_strategy):
+    """
+    AC43: bepaal position_key als primaire aggregatie-eenheid.
+    Voorkeur: position_key direct uit feedback-row (door reconstruction gevuld).
+    Fallback: market__strategy of alleen market.
+    """
+    market = str(row.get("market", "") or "").strip()
+
+    # Directe position_key uit reconstruction (AC43-pad)
+    pk = str(row.get("position_key", "") or "").strip()
+    strategy_direct = str(row.get("strategy", "") or "").strip().upper()
+    if pk and pk != market and "__" in pk:
+        return pk, strategy_direct if strategy_direct else pk.split("__", 1)[1]
+
+    # Fallback: resolve strategy via execution log
+    strategy = resolve_strategy(row, decision_to_strategy, execution_to_strategy, market_to_strategy)
+    if strategy and strategy != "UNKNOWN":
+        return f"{market}__{strategy}", strategy
+
+    # Laatste fallback: market zonder strategy
+    return market, "UNKNOWN"
+
+
 def main():
     ts = utc_now_ts()
 
@@ -141,6 +160,7 @@ def main():
 
     decision_to_strategy, execution_to_strategy, market_to_strategy = build_strategy_maps(execution_rows)
 
+    # AC43: groepeer op position_key als primaire eenheid
     grouped = {}
     unresolved_rows = 0
 
@@ -149,11 +169,8 @@ def main():
         if not market:
             continue
 
-        strategy = resolve_strategy(
-            row=row,
-            decision_to_strategy=decision_to_strategy,
-            execution_to_strategy=execution_to_strategy,
-            market_to_strategy=market_to_strategy
+        position_key, strategy = resolve_position_key(
+            row, decision_to_strategy, execution_to_strategy, market_to_strategy
         )
 
         if strategy == "UNKNOWN":
@@ -162,10 +179,12 @@ def main():
         realized_pnl = round(to_float(row.get("realized_pnl", 0.0), 0.0), 2)
         unrealized_pnl = round(to_float(row.get("unrealized_pnl", 0.0), 0.0), 2)
         row_score = round(realized_pnl + unrealized_pnl, 2)
+        state = str(row.get("state", "") or "").upper()
+        entry_ts = row.get("entry_ts") or row.get("exit_ts")
 
-        key = (market, strategy)
-        if key not in grouped:
-            grouped[key] = {
+        if position_key not in grouped:
+            grouped[position_key] = {
+                "position_key": position_key,
                 "market": market,
                 "strategy": strategy,
                 "score": 0.0,
@@ -173,17 +192,30 @@ def main():
                 "trade_count": 0,
                 "open_trade_count": 0,
                 "closed_trade_count": 0,
+                "win_count": 0,
+                "loss_count": 0,
                 "realized_pnl_sum": 0.0,
                 "unrealized_pnl_sum": 0.0,
-                "source_trade_ids": []
+                "last_trade_ts": None,
+                "last_outcome": None,
+                "source_trade_ids": [],
             }
 
-        bucket = grouped[key]
+        bucket = grouped[position_key]
         bucket["trade_count"] += 1
-        if str(row.get("state", "") or "").upper() == "OPEN":
+
+        if state == "OPEN":
             bucket["open_trade_count"] += 1
-        elif str(row.get("state", "") or "").upper() == "CLOSED":
+        elif state == "CLOSED":
             bucket["closed_trade_count"] += 1
+            if realized_pnl > 0:
+                bucket["win_count"] += 1
+            elif realized_pnl < 0:
+                bucket["loss_count"] += 1
+            # last_outcome gebaseerd op meest recente closed trade
+            if entry_ts and (bucket["last_trade_ts"] is None or entry_ts > bucket["last_trade_ts"]):
+                bucket["last_trade_ts"] = entry_ts
+                bucket["last_outcome"] = "WIN" if realized_pnl > 0 else ("LOSS" if realized_pnl < 0 else "FLAT")
 
         bucket["realized_pnl_sum"] = round(bucket["realized_pnl_sum"] + realized_pnl, 2)
         bucket["unrealized_pnl_sum"] = round(bucket["unrealized_pnl_sum"] + unrealized_pnl, 2)
@@ -194,45 +226,47 @@ def main():
             bucket["source_trade_ids"].append(trade_id)
 
     state_rows = []
-    for (_, _), bucket in sorted(grouped.items(), key=lambda kv: (kv[1]["market"], kv[1]["strategy"])):
+    for position_key in sorted(grouped.keys()):
+        bucket = grouped[position_key]
         bucket["label"] = label_from_score(bucket["score"])
         state_rows.append(bucket)
 
-    state_map = {}
-    for row in state_rows:
-        market = row["market"]
-        if market not in state_map:
-            state_map[market] = []
-        state_map[market].append({
-            "strategy": row["strategy"],
-            "score": row["score"],
-            "label": row["label"],
-            "trade_count": row["trade_count"],
-            "open_trade_count": row["open_trade_count"],
-            "closed_trade_count": row["closed_trade_count"],
-            "realized_pnl_sum": row["realized_pnl_sum"],
-            "unrealized_pnl_sum": row["unrealized_pnl_sum"],
-            "source_trade_ids": row["source_trade_ids"],
-        })
+    # AC43: state_map keyed op position_key (was: market)
+    state_map = {row["position_key"]: {
+        "market": row["market"],
+        "strategy": row["strategy"],
+        "score": row["score"],
+        "label": row["label"],
+        "trade_count": row["trade_count"],
+        "open_trade_count": row["open_trade_count"],
+        "closed_trade_count": row["closed_trade_count"],
+        "win_count": row["win_count"],
+        "loss_count": row["loss_count"],
+        "realized_pnl_sum": row["realized_pnl_sum"],
+        "unrealized_pnl_sum": row["unrealized_pnl_sum"],
+        "last_trade_ts": row["last_trade_ts"],
+        "last_outcome": row["last_outcome"],
+        "source_trade_ids": row["source_trade_ids"],
+    } for row in state_rows}
 
     out = {
         "component": "paper_strategy_feedback_state_lite",
         "ts_utc": ts,
         "source_feedback_file": str(FEEDBACK_PATH),
         "source_execution_log_file": str(EXECUTION_LOG_PATH),
-        "markets_total": len(state_map),
-        "market_strategy_rows_total": len(state_rows),
+        "strategy_keys_total": len(state_map),
         "trade_rows_total": len(feedback_rows),
         "unresolved_strategy_rows": unresolved_rows,
-        "score_definition": "sum(realized_pnl + unrealized_pnl) grouped by market+strategy from current paper_trade_feedback rows",
+        "score_definition": "sum(realized_pnl + unrealized_pnl) per position_key (market__strategy)",
         "rows": state_rows,
-        "markets": state_map
+        "strategy_keys": state_map,
     }
 
     write_json(OUT_STATE_PATH, out)
     write_tsv(
         OUT_STATE_TSV_PATH,
         [
+            "position_key",
             "market",
             "strategy",
             "score",
@@ -240,8 +274,12 @@ def main():
             "trade_count",
             "open_trade_count",
             "closed_trade_count",
+            "win_count",
+            "loss_count",
             "realized_pnl_sum",
-            "unrealized_pnl_sum"
+            "unrealized_pnl_sum",
+            "last_trade_ts",
+            "last_outcome",
         ],
         state_rows
     )

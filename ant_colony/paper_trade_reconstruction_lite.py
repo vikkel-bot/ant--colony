@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -62,12 +62,35 @@ def write_tsv(path: Path, headers, rows):
     path.write_text("`n".join(lines), encoding="utf-8")
 
 
-def build_trade_id(market, execution_id, decision_id):
+def infer_position_key(market: str, decision_id: str):
+    """
+    AC43: leid position_key en strategy af uit decision_id.
+    Verwacht formaat: {position_key}_{cycle_id}_{action}
+    Bijv: BTC-EUR__EDGE4_20260407T092720Z_ENTER_LONG -> (BTC-EUR__EDGE4, EDGE4)
+    Fallback naar (market, "UNKNOWN") voor pre-AC40 of ontbrekende decision_id.
+    """
+    if not decision_id:
+        return market, "UNKNOWN"
+    for suffix in ("_ENTER_LONG", "_EXIT_LONG", "_NO_ACTION"):
+        if decision_id.endswith(suffix):
+            rest = decision_id[:-len(suffix)]  # verwijder actie-suffix
+            idx = rest.rfind("_")              # verwijder cycle_id
+            if idx > 0:
+                pos_key = rest[:idx]
+                if "__" in pos_key:
+                    strategy = pos_key.split("__", 1)[1]
+                    return pos_key, strategy
+            break
+    # Fallback: geen strategy info afleidbaar
+    return market, "UNKNOWN"
+
+
+def build_trade_id(position_key, execution_id, decision_id):
     if execution_id:
-        return f"{market}|{execution_id}"
+        return f"{position_key}|{execution_id}"
     if decision_id:
-        return f"{market}|{decision_id}"
-    return f"{market}|UNKNOWN"
+        return f"{position_key}|{decision_id}"
+    return f"{position_key}|UNKNOWN"
 
 
 def main():
@@ -78,7 +101,8 @@ def main():
     portfolio_state = load_json(PORTFOLIO_STATE_PATH, {})
     portfolio_summary = load_json(PORTFOLIO_SUMMARY_PATH, {})
 
-    open_trade_by_market = {}
+    # AC43: keyed op position_key i.p.v. market zodat EDGE3 en EDGE4 apart staan
+    open_trade_by_key = {}
     closed_trades = []
     ignored_events = 0
 
@@ -90,10 +114,23 @@ def main():
             ignored_events += 1
             continue
 
+        # SKIP-entries (AC41.1 guards) negeren
+        if action == "SKIP":
+            continue
+
+        decision_id = str(row.get("decision_id", "") or "")
+        position_key, strategy = infer_position_key(market, decision_id)
+
         if action == "ENTER_LONG":
             trade = {
-                "trade_id": build_trade_id(market, row.get("decision_id", "").replace("_ENTER_LONG", ""), row.get("decision_id")),
+                "trade_id": build_trade_id(
+                    position_key,
+                    decision_id.replace("_ENTER_LONG", ""),
+                    decision_id
+                ),
                 "market": market,
+                "position_key": position_key,
+                "strategy": strategy,
                 "state": "OPEN",
                 "entry_ts": row.get("ts_utc"),
                 "exit_ts": None,
@@ -105,15 +142,18 @@ def main():
                 "realized_pnl": 0.0,
                 "unrealized_pnl": 0.0,
                 "holding_state": "OPEN",
-                "entry_decision_id": row.get("decision_id"),
+                "entry_decision_id": decision_id,
                 "exit_decision_id": None,
                 "entry_reason": row.get("reason"),
                 "exit_reason": None,
             }
-            open_trade_by_market[market] = trade
+            open_trade_by_key[position_key] = trade
 
         elif action == "EXIT_LONG":
-            current = open_trade_by_market.get(market)
+            current = open_trade_by_key.get(position_key)
+            if not current:
+                # AC43 fallback: probeer market-only key voor pre-AC40 logs
+                current = open_trade_by_key.get(market)
             if not current:
                 ignored_events += 1
                 continue
@@ -124,19 +164,31 @@ def main():
             current["exit_price"] = to_float(row.get("price", 0.0), 0.0)
             current["exit_notional_eur"] = to_float(row.get("notional_eur", 0.0), 0.0)
             current["realized_pnl"] = round(to_float(row.get("realized_pnl", 0.0), 0.0), 2)
-            current["exit_decision_id"] = row.get("decision_id")
+            current["exit_decision_id"] = decision_id
             current["exit_reason"] = row.get("reason")
             closed_trades.append(current)
-            del open_trade_by_market[market]
+            open_trade_by_key.pop(position_key, None)
+            open_trade_by_key.pop(market, None)
 
     open_trades = []
     last_price_map = (portfolio_state.get("last_price_map", {}) or {})
     portfolio_positions = (portfolio_state.get("positions", {}) or {})
 
-    for market, trade in sorted(open_trade_by_market.items()):
-        pos = (positions.get(market) or portfolio_positions.get(market) or {})
+    for position_key, trade in sorted(open_trade_by_key.items()):
+        market = trade["market"]
+        # AC43: zoek positie op position_key; fallback naar market voor pre-AC40
+        pos = (
+            positions.get(position_key)
+            or portfolio_positions.get(position_key)
+            or positions.get(market)
+            or portfolio_positions.get(market)
+            or {}
+        )
         if str(pos.get("position", "FLAT")).upper() == "LONG":
-            mark_price = to_float(last_price_map.get(market), trade.get("entry_price", 0.0))
+            mark_price = to_float(
+                last_price_map.get(market),
+                trade.get("entry_price", 0.0)
+            )
             entry_price = to_float(trade.get("entry_price", 0.0), 0.0)
             size = to_float(trade.get("size", 0.0), 0.0)
             unrealized = round(size * (mark_price - entry_price), 2)
@@ -144,7 +196,9 @@ def main():
             trade["mark_price"] = mark_price
             trade["unrealized_pnl"] = unrealized
             trade["feedback_score"] = unrealized
-            trade["feedback_label"] = "POSITIVE" if unrealized > 0 else ("NEGATIVE" if unrealized < 0 else "FLAT")
+            trade["feedback_label"] = (
+                "POSITIVE" if unrealized > 0 else ("NEGATIVE" if unrealized < 0 else "FLAT")
+            )
             open_trades.append(trade)
         else:
             ignored_events += 1
@@ -153,12 +207,18 @@ def main():
         pnl = round(to_float(trade.get("realized_pnl", 0.0), 0.0), 2)
         trade["mark_price"] = to_float(trade.get("exit_price", 0.0), 0.0)
         trade["feedback_score"] = pnl
-        trade["feedback_label"] = "POSITIVE" if pnl > 0 else ("NEGATIVE" if pnl < 0 else "FLAT")
+        trade["feedback_label"] = (
+            "POSITIVE" if pnl > 0 else ("NEGATIVE" if pnl < 0 else "FLAT")
+        )
 
     all_trades = open_trades + closed_trades
 
-    realized_total = round(sum(to_float(x.get("realized_pnl", 0.0), 0.0) for x in closed_trades), 2)
-    unrealized_total = round(sum(to_float(x.get("unrealized_pnl", 0.0), 0.0) for x in open_trades), 2)
+    realized_total = round(
+        sum(to_float(x.get("realized_pnl", 0.0), 0.0) for x in closed_trades), 2
+    )
+    unrealized_total = round(
+        sum(to_float(x.get("unrealized_pnl", 0.0), 0.0) for x in open_trades), 2
+    )
 
     out = {
         "component": "paper_trade_reconstruction_lite",
@@ -181,6 +241,8 @@ def main():
         [
             "trade_id",
             "market",
+            "position_key",
+            "strategy",
             "state",
             "entry_ts",
             "exit_ts",

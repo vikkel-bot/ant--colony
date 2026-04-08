@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -40,10 +40,19 @@ def main():
 
     feedback_rows = []
     for row in rows:
+        market = row.get("market")
+        # AC43: position_key en strategy doorsturen; fallback naar market/UNKNOWN
+        position_key = row.get("position_key") or market
+        strategy = row.get("strategy") or "UNKNOWN"
+
         feedback_rows.append({
-            "market": row.get("market"),
+            "market": market,
+            "position_key": position_key,
+            "strategy": strategy,
             "trade_id": row.get("trade_id"),
             "state": row.get("state"),
+            "entry_ts": row.get("entry_ts"),
+            "exit_ts": row.get("exit_ts"),
             "feedback_score": row.get("feedback_score", 0.0),
             "feedback_label": row.get("feedback_label", "FLAT"),
             "realized_pnl": row.get("realized_pnl", 0.0),
@@ -55,7 +64,7 @@ def main():
     out = {
         "component": "paper_trade_feedback_lite",
         "ts_utc": ts,
-        "markets_total": len(feedback_rows),
+        "feedback_rows_total": len(feedback_rows),
         "trade_count_total": int(trades.get("trade_count_total", 0)),
         "open_trade_count": int(trades.get("open_trade_count", 0)),
         "closed_trade_count": int(trades.get("closed_trade_count", 0)),
@@ -72,8 +81,12 @@ def main():
         OUT_FEEDBACK_TSV_PATH,
         [
             "market",
+            "position_key",
+            "strategy",
             "trade_id",
             "state",
+            "entry_ts",
+            "exit_ts",
             "feedback_score",
             "feedback_label",
             "realized_pnl",
