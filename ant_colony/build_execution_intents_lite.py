@@ -8,10 +8,17 @@ COMBINED_STATUS_PATH = OUT_DIR / "combined_colony_status.json"
 OUT_SUMMARY_PATH = OUT_DIR / "execution_summary.json"
 TEST_OVERRIDE_PATH = OUT_DIR / "paper_execution_test_override.json"
 PORTFOLIO_SUMMARY_PATH = OUT_DIR / "paper_portfolio_summary.json"
+PORTFOLIO_STATE_PATH = OUT_DIR / "paper_portfolio_state.json"
 WORKER_SELECTION_PATH = OUT_DIR / "worker_strategy_selection.json"
 
-# AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias
+# AC-40: gate-as-signal per strategie
 ENABLED_STRATEGIES = ["EDGE3", "EDGE4"]
+
+# AC-41: expliciete per-strategie allocatieverdeling (hardcoded, zichtbaar)
+STRATEGY_ALLOCATION_PCT = {
+    "EDGE3": 0.5,
+    "EDGE4": 0.5,
+}
 
 
 def utc_now_ts():
@@ -86,6 +93,17 @@ def load_portfolio_summary():
     return obj
 
 
+def load_portfolio_state_cash() -> float:
+    """AC-41: laad beschikbare cash uit portfolio state voor requested_notional berekening."""
+    obj, err = load_json(PORTFOLIO_STATE_PATH)
+    if err or not isinstance(obj, dict):
+        return 10000.0
+    try:
+        return float(obj.get("cash", 10000.0))
+    except Exception:
+        return 10000.0
+
+
 def load_worker_selection_map():
     obj, err = load_json(WORKER_SELECTION_PATH)
     if err or not isinstance(obj, dict):
@@ -123,13 +141,14 @@ def infer_strategy_signal(strategy: str, edge3_gate: str, health_gate: str):
 def main():
     combined, combined_err = load_json(COMBINED_STATUS_PATH)
     portfolio_summary = load_portfolio_summary()
+    portfolio_cash = load_portfolio_state_cash()
     worker_selection_map, worker_selection_err = load_worker_selection_map()
     now_ts = utc_now_ts()
     test_override = load_test_override()
 
     if combined_err or not isinstance(combined, dict):
         summary = {
-            "version": "execution_summary_v8",
+            "version": "execution_summary_v10",
             "ts_utc": now_ts,
             "source_component": "build_execution_intents_lite",
             "combined_status_ok": False,
@@ -163,8 +182,11 @@ def main():
     allowed_count = 0
     blocked_count = 0
     reason_counts = {}
+    total_requested_eur = 0.0
 
     freshness_block = freshness_block_active(portfolio_summary)
+    # AC-41: base_notional gebaseerd op huidige cash (gedeeld over alle markten/strategieën)
+    base_notional = min(1000.0, portfolio_cash * 0.10)
 
     for market in sorted(markets.keys()):
         market_row = markets.get(market) or {}
@@ -230,8 +252,18 @@ def main():
             position_key = f"{market}__{strategy}"
             decision_id = f"{position_key}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"
 
+            # AC-41: expliciete allocatieberekening per strategie
+            if allowed and action == "ENTER_LONG":
+                allocation_pct = STRATEGY_ALLOCATION_PCT.get(strategy, 0.0)
+                allocation_reason = "STRATEGY_ALLOCATION"
+            else:
+                allocation_pct = 0.0
+                allocation_reason = "NO_SIGNAL_OR_BLOCKED"
+            requested_notional_eur = round(base_notional * size_mult * allocation_pct, 2)
+            total_requested_eur = round(total_requested_eur + requested_notional_eur, 2)
+
             intent = {
-                "version": "execution_intent_v6",
+                "version": "execution_intent_v7",
                 "ts_utc": now_ts,
                 "source_component": "build_execution_intents_lite",
                 "cycle_id": cycle_id,
@@ -242,6 +274,9 @@ def main():
                 "strategy": strategy,
                 "bias": "LONG" if action == "ENTER_LONG" else "NEUTRAL",
                 "size_mult": size_mult,
+                "allocation_pct": allocation_pct,
+                "allocation_reason": allocation_reason,
+                "requested_notional_eur": requested_notional_eur,
                 "edge3_gate": edge3_gate or None,
                 "health_gate": health_gate or None,
                 "execution_allowed": allowed,
@@ -275,6 +310,9 @@ def main():
                 "action": action,
                 "reason": reason,
                 "signal_reason": signal_reason,
+                "allocation_pct": allocation_pct,
+                "allocation_reason": allocation_reason,
+                "requested_notional_eur": requested_notional_eur,
                 "test_override_applied": override_applied,
                 "intent_file": str(out_path),
             }
@@ -294,7 +332,7 @@ def main():
         }
 
     summary = {
-        "version": "execution_summary_v9",
+        "version": "execution_summary_v10",
         "ts_utc": now_ts,
         "source_component": "build_execution_intents_lite",
         "combined_status_ok": True,
@@ -304,6 +342,8 @@ def main():
         "intents_total": len(markets) * len(ENABLED_STRATEGIES),
         "allowed_count": allowed_count,
         "blocked_count": blocked_count,
+        "total_requested_eur": total_requested_eur,
+        "portfolio_cash_snapshot": portfolio_cash,
         "freshness_ok": bool(combined_freshness.get("freshness_ok", False)),
         "freshness_breakdown": {
             "edge3_fresh": combined_freshness.get("edge3_fresh"),
@@ -329,9 +369,16 @@ def main():
                 "readiness_allowed": (m.get("execution_readiness") or {}).get("allowed"),
                 "readiness_reason": (m.get("execution_readiness") or {}).get("reason"),
                 "strategies": {
-                    s: summary_markets.get(mkt, {}).get("strategies", {}).get(s, {})
+                    s: {
+                        k: v for k, v in summary_markets.get(mkt, {}).get("strategies", {}).get(s, {}).items()
+                        if k != "intent_file"
+                    }
                     for s in ENABLED_STRATEGIES
                 },
+                "market_total_requested_eur": sum(
+                    summary_markets.get(mkt, {}).get("strategies", {}).get(s, {}).get("requested_notional_eur", 0.0)
+                    for s in ENABLED_STRATEGIES
+                ),
             }
 
         (OUT_DIR / "signal_visibility.json").write_text(

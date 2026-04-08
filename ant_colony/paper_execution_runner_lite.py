@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -11,6 +11,7 @@ EXECUTION_LOG_PATH = OUT_DIR / "paper_execution_log.jsonl"
 EXECUTED_IDS_PATH = OUT_DIR / "paper_executed_ids.json"
 METRICS_PATH = OUT_DIR / "paper_execution_metrics.json"
 SUMMARY_PATH = OUT_DIR / "paper_execution_summary.json"
+MARKET_DATA_PATH = OUT_DIR / "worker_market_data.json"
 
 
 def utc_now_ts():
@@ -53,6 +54,7 @@ def main():
         "positions": {}
     })
     executed_ids = load_json(EXECUTED_IDS_PATH, [])
+    market_data = load_json(MARKET_DATA_PATH, {})
 
     if not isinstance(positions, dict):
         positions = {}
@@ -64,137 +66,197 @@ def main():
         executed_ids = []
 
     markets = (execution_summary.get("markets") or {})
-    intents_processed = 0
-    intents_allowed = 0
-    intents_skipped = 0
-    position_count = 0
-    executed_now = 0
-
     cash = to_float(portfolio.get("cash", 10000.0), 10000.0)
 
+    intents_processed = 0
+    intents_skipped = 0
+    executed_now = 0
+    budget_limited_count = 0
+
+    # === FASE 1: Verzamel ENTER_LONG kandidaten ===
+    # EXIT_LONG wordt apart verwerkt (geen budget-impact, geeft cash terug).
+    enter_candidates = []
+    exit_candidates = []
+
     for market, market_row in sorted(markets.items()):
-        # AC-40: per-strategy loop (was: per-market)
         for strategy, row in (market_row.get("strategies") or {}).items():
             intents_processed += 1
             allowed = bool(row.get("allowed", False))
             action = str(row.get("action", "NO_ACTION") or "NO_ACTION").upper()
-            reason = row.get("reason")
             intent_file = row.get("intent_file")
 
-            if not allowed:
-                intents_skipped += 1
-                continue
-
-            if not intent_file:
+            if not allowed or not intent_file:
                 intents_skipped += 1
                 continue
 
             intent = load_json(Path(intent_file), {})
             decision_id = str(intent.get("decision_id", ""))
-            strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
-            position_key = f"{market}__{strategy}"
 
             if not decision_id or decision_id in executed_ids:
                 intents_skipped += 1
                 continue
 
+            intent_strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
+            position_key = f"{market}__{intent_strategy}"
+
             if action == "ENTER_LONG":
-                price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
-                size_mult = to_float(intent.get("size_mult", 1.0), 1.0)
-
-                if price <= 0.0:
+                requested_notional_eur = to_float(intent.get("requested_notional_eur", 0.0))
+                if requested_notional_eur <= 0.0:
                     intents_skipped += 1
                     continue
-
-                base_notional = min(1000.0, cash * 0.10)
-                notional = round(base_notional * size_mult, 2)
-
-                if notional <= 0.0 or cash < notional:
-                    intents_skipped += 1
-                    continue
-
-                size = round(notional / price, 10)
-
-                positions[position_key] = {
-                    "position": "LONG",
-                    "size": size,
-                    "entry_price": price,
-                    "entry_ts": ts,
-                    "decision_id": decision_id,
-                    "execution_id": decision_id.replace("_ENTER_LONG", ""),
-                    "notional_eur": notional
-                }
-
-                portfolio["positions"][position_key] = positions[position_key]
-                cash = round(cash - notional, 2)
-
-                append_jsonl(EXECUTION_LOG_PATH, {
-                    "ts_utc": ts,
+                enter_candidates.append({
                     "market": market,
-                    "action": "ENTER_LONG",
+                    "strategy": intent_strategy,
+                    "position_key": position_key,
                     "decision_id": decision_id,
-                    "price": price,
-                    "size": size,
-                    "notional_eur": notional,
-                    "reason": reason
+                    "intent": intent,
+                    "row": row,
+                    "requested_notional_eur": requested_notional_eur,
                 })
-
-                executed_ids.append(decision_id)
-                executed_now += 1
-                intents_allowed += 1
-
             elif action == "EXIT_LONG":
-                strategy = str(intent.get("strategy", "NONE") or "NONE").upper()
-                position_key = f"{market}__{strategy}"
-                pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
-                if str(pos.get("position", "FLAT")).upper() != "LONG":
-                    intents_skipped += 1
-                    continue
-
-                price = to_float(((load_json(OUT_DIR / "worker_market_data.json", {}).get("markets", {}).get(market, {}) or {}).get("last_price")), 0.0)
-                size = to_float(pos.get("size", 0.0), 0.0)
-                entry_price = to_float(pos.get("entry_price", 0.0), 0.0)
-                notional_back = round(size * price, 2)
-                realized_pnl = round(size * (price - entry_price), 2)
-
-                if price <= 0.0 or size <= 0.0:
-                    intents_skipped += 1
-                    continue
-
-                cash = round(cash + notional_back, 2)
-
-                append_jsonl(EXECUTION_LOG_PATH, {
-                    "ts_utc": ts,
+                exit_candidates.append({
                     "market": market,
-                    "action": "EXIT_LONG",
+                    "strategy": intent_strategy,
+                    "position_key": position_key,
                     "decision_id": decision_id,
-                    "price": price,
-                    "size": size,
-                    "notional_eur": notional_back,
-                    "realized_pnl": realized_pnl,
-                    "reason": reason
+                    "intent": intent,
+                    "row": row,
                 })
 
-                positions[position_key] = {
-                    "position": "FLAT",
-                    "size": 0.0,
-                    "entry_price": 0.0,
-                    "entry_ts": None,
-                    "decision_id": decision_id,
-                    "execution_id": decision_id.replace("_EXIT_LONG", ""),
-                    "notional_eur": 0.0,
-                    "exit_price": price,
-                    "exit_ts": ts,
-                    "realized_pnl": realized_pnl
-                }
+    # === FASE 2: Bepaal granted_notional_eur per kandidaat ===
+    # Proportionele scaling als totaal > beschikbare cash.
+    total_requested_eur = round(sum(c["requested_notional_eur"] for c in enter_candidates), 2)
+    if total_requested_eur > 0 and total_requested_eur > cash:
+        scale = cash / total_requested_eur
+        budget_constrained = True
+    else:
+        scale = 1.0
+        budget_constrained = False
 
-                portfolio["positions"][position_key] = positions[position_key]
-                executed_ids.append(decision_id)
-                executed_now += 1
-                intents_allowed += 1
+    total_granted_eur = 0.0
 
-            else:
-                intents_skipped += 1
+    for c in enter_candidates:
+        granted = round(c["requested_notional_eur"] * scale, 2)
+        c["granted_notional_eur"] = granted
+        c["skipped_due_to_budget"] = budget_constrained and granted < c["requested_notional_eur"]
+        c["budget_shortfall_eur"] = round(total_requested_eur - cash, 2) if budget_constrained else 0.0
+
+    # === FASE 3a: Verwerk EXIT_LONG (geeft cash terug, geen budget nodig) ===
+    for c in exit_candidates:
+        market = c["market"]
+        position_key = c["position_key"]
+        decision_id = c["decision_id"]
+        intent = c["intent"]
+        reason = c["row"].get("reason")
+
+        pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
+        if str(pos.get("position", "FLAT")).upper() != "LONG":
+            intents_skipped += 1
+            continue
+
+        price = to_float(
+            (market_data.get("markets", {}).get(market, {}) or {}).get("last_price"), 0.0
+        )
+        size = to_float(pos.get("size", 0.0), 0.0)
+        entry_price = to_float(pos.get("entry_price", 0.0), 0.0)
+
+        if price <= 0.0 or size <= 0.0:
+            intents_skipped += 1
+            continue
+
+        notional_back = round(size * price, 2)
+        realized_pnl = round(size * (price - entry_price), 2)
+        cash = round(cash + notional_back, 2)
+
+        append_jsonl(EXECUTION_LOG_PATH, {
+            "ts_utc": ts,
+            "market": market,
+            "action": "EXIT_LONG",
+            "decision_id": decision_id,
+            "price": price,
+            "size": size,
+            "notional_eur": notional_back,
+            "realized_pnl": realized_pnl,
+            "reason": reason,
+        })
+
+        positions[position_key] = {
+            "position": "FLAT",
+            "size": 0.0,
+            "entry_price": 0.0,
+            "entry_ts": None,
+            "decision_id": decision_id,
+            "execution_id": decision_id.replace("_EXIT_LONG", ""),
+            "notional_eur": 0.0,
+            "exit_price": price,
+            "exit_ts": ts,
+            "realized_pnl": realized_pnl,
+        }
+        portfolio["positions"][position_key] = positions[position_key]
+        executed_ids.append(decision_id)
+        executed_now += 1
+
+    # === FASE 3b: Verwerk ENTER_LONG op basis van granted_notional_eur ===
+    for c in enter_candidates:
+        market = c["market"]
+        position_key = c["position_key"]
+        decision_id = c["decision_id"]
+        intent = c["intent"]
+        reason = c["row"].get("reason")
+        size_mult = to_float(intent.get("size_mult", 1.0), 1.0)
+        granted = c["granted_notional_eur"]
+
+        # AC-41: fail-closed — geen execution zonder granted_notional_eur > 0
+        if granted <= 0.0:
+            intents_skipped += 1
+            if c["skipped_due_to_budget"]:
+                budget_limited_count += 1
+            continue
+
+        price = to_float(
+            (market_data.get("markets", {}).get(market, {}) or {}).get("last_price"), 0.0
+        )
+        if price <= 0.0:
+            intents_skipped += 1
+            continue
+
+        # Dubbele check: genoeg cash (na EXIT_LONGs kan cash gestegen zijn)
+        if cash < granted:
+            intents_skipped += 1
+            budget_limited_count += 1
+            continue
+
+        size = round(granted / price, 10)
+
+        positions[position_key] = {
+            "position": "LONG",
+            "size": size,
+            "entry_price": price,
+            "entry_ts": ts,
+            "decision_id": decision_id,
+            "execution_id": decision_id.replace("_ENTER_LONG", ""),
+            "notional_eur": granted,
+        }
+        portfolio["positions"][position_key] = positions[position_key]
+        cash = round(cash - granted, 2)
+        total_granted_eur = round(total_granted_eur + granted, 2)
+
+        append_jsonl(EXECUTION_LOG_PATH, {
+            "ts_utc": ts,
+            "market": market,
+            "action": "ENTER_LONG",
+            "decision_id": decision_id,
+            "price": price,
+            "size": size,
+            "requested_notional_eur": c["requested_notional_eur"],
+            "granted_notional_eur": granted,
+            "skipped_due_to_budget": c["skipped_due_to_budget"],
+            "budget_shortfall_eur": c["budget_shortfall_eur"],
+            "reason": reason,
+        })
+
+        executed_ids.append(decision_id)
+        executed_now += 1
 
     portfolio["cash"] = round(cash, 2)
     portfolio["position_count"] = sum(
@@ -214,7 +276,7 @@ def main():
         "cash": portfolio.get("cash", 0.0),
         "position_count": position_count,
         "markets": [m for m, p in positions.items() if str((p or {}).get("position", "FLAT")).upper() == "LONG"],
-        "executed_now": executed_now
+        "executed_now": executed_now,
     }
     save_json(METRICS_PATH, metrics)
 
@@ -222,11 +284,15 @@ def main():
         "component": "paper_execution_runner_lite",
         "ts": ts,
         "intents_processed": intents_processed,
-        "intents_allowed": intents_allowed,
         "intents_skipped": intents_skipped,
+        "executed_now": executed_now,
+        "total_requested_eur": total_requested_eur,
+        "total_granted_eur": total_granted_eur,
+        "budget_limited_count": budget_limited_count,
+        "budget_constrained": budget_constrained,
         "log_file_exists": EXECUTION_LOG_PATH.exists(),
         "executed_ids_count": len(executed_ids),
-        "position_count": position_count
+        "position_count": position_count,
     }
     save_json(SUMMARY_PATH, summary)
 
@@ -235,4 +301,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
