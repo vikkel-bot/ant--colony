@@ -127,22 +127,46 @@ def freshness_block_active(portfolio_summary: dict):
     return (valuation_state == "BLOCKED_FRESHNESS") or (not all_prices_fresh)
 
 
-def infer_strategy_signal(strategy: str, edge3_gate: str, health_gate: str):
-    """
-    AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias.
-    Bepaal per strategie of er een entry-signaal is op basis van gate-status.
-    EDGE3: vereist zowel edge3_gate als health_gate ALLOW.
-    EDGE4: vereist alleen health_gate ALLOW (ongeacht edge3_gate).
-    """
+def eval_edge3_signal(edge3_gate: str, health_gate: str) -> dict:
+    """AC42: EDGE3 signaal — bullish als edge3_gate én health_gate ALLOW."""
+    if edge3_gate == "ALLOW" and health_gate == "ALLOW":
+        return {"signal_action": "ENTER_LONG", "signal_bias": "BULLISH",
+                "signal_reason": "EDGE3_GATES_CLEAR", "signal_strength": 1.0}
+    if health_gate != "ALLOW":
+        return {"signal_action": "NO_ACTION", "signal_bias": "NEUTRAL",
+                "signal_reason": "EDGE3_HEALTH_BLOCKED", "signal_strength": 0.0}
+    return {"signal_action": "NO_ACTION", "signal_bias": "NEUTRAL",
+            "signal_reason": "EDGE3_GATE_BLOCKED", "signal_strength": 0.0}
+
+
+def eval_edge4_signal(health_gate: str) -> dict:
+    """AC42: EDGE4 signaal — bullish als health_gate ALLOW (edge3_gate irrelevant)."""
+    if health_gate == "ALLOW":
+        return {"signal_action": "ENTER_LONG", "signal_bias": "BULLISH",
+                "signal_reason": "EDGE4_HEALTH_CLEAR", "signal_strength": 1.0}
+    return {"signal_action": "NO_ACTION", "signal_bias": "NEUTRAL",
+            "signal_reason": "EDGE4_HEALTH_BLOCKED", "signal_strength": 0.0}
+
+
+def eval_strategy_signal(strategy: str, edge3_gate: str, health_gate: str) -> dict:
+    """AC42: dispatcher naar per-strategie signal evaluator."""
     if strategy == "EDGE3":
-        if edge3_gate == "ALLOW" and health_gate == "ALLOW":
-            return "ENTER_LONG", "EDGE3_GATE_SIGNAL"
-        return "NO_ACTION", "EDGE3_GATE_BLOCKED"
+        return eval_edge3_signal(edge3_gate, health_gate)
     if strategy == "EDGE4":
-        if health_gate == "ALLOW":
-            return "ENTER_LONG", "EDGE4_HEALTH_GATE_SIGNAL"
-        return "NO_ACTION", "EDGE4_HEALTH_GATE_BLOCKED"
-    return "NO_ACTION", "UNKNOWN_STRATEGY"
+        return eval_edge4_signal(health_gate)
+    return {"signal_action": "NO_ACTION", "signal_bias": "NEUTRAL",
+            "signal_reason": "UNKNOWN_STRATEGY", "signal_strength": 0.0}
+
+
+def derive_router_bias(strategy: str, edge3_gate: str, health_gate: str) -> dict:
+    """
+    AC42: router bias — expliciete voorkeur of suppressie per strategie.
+    EDGE4 krijgt FAVOR als EDGE3 geblokkeerd is maar health OK:
+    EDGE4 is dan het actieve alternatieve kanaal.
+    """
+    if strategy == "EDGE4" and edge3_gate != "ALLOW" and health_gate == "ALLOW":
+        return {"router_bias": "FAVOR", "router_bias_reason": "EDGE4_ACTIVE_WHEN_EDGE3_BLOCKED"}
+    return {"router_bias": "NEUTRAL", "router_bias_reason": "NO_BIAS"}
 
 
 def main():
@@ -215,10 +239,14 @@ def main():
 
         strategy_results = {}
 
-        # AC-40: loop over alle enabled strategieën per markt
+        # AC42: loop over alle enabled strategieën per markt
         for strategy in ENABLED_STRATEGIES:
-            # AC-40 TEMP: gate-as-signal, vervangen in AC-41 door router bias
-            action, signal_reason = infer_strategy_signal(strategy, edge3_gate, health_gate)
+            # AC42: expliciete signal layer — bevroren na evaluatie, niet overschreven door guards
+            sig = eval_strategy_signal(strategy, edge3_gate, health_gate)
+            bias_info = derive_router_bias(strategy, edge3_gate, health_gate)
+
+            # action start vanuit signal; guards kunnen het daarna naar NO_ACTION forceren
+            action = sig["signal_action"]
 
             # Kopieer readiness en guard_blockers per strategie
             readiness = dict(readiness_base)
@@ -241,7 +269,7 @@ def main():
                 reason = test_override["reason"]
                 readiness["allowed"] = True
                 readiness["reason"] = test_override["reason"]
-                signal_reason = test_override["reason"]
+                # signal-velden NIET overschreven — override is een test-artefact
 
             if freshness_block:
                 allowed = False
@@ -276,7 +304,7 @@ def main():
             total_requested_eur = round(total_requested_eur + requested_notional_eur, 2)
 
             intent = {
-                "version": "execution_intent_v7",
+                "version": "execution_intent_v8",
                 "ts_utc": now_ts,
                 "source_component": "build_execution_intents_lite",
                 "cycle_id": cycle_id,
@@ -286,6 +314,12 @@ def main():
                 "action": action,
                 "strategy": strategy,
                 "bias": "LONG" if action == "ENTER_LONG" else "NEUTRAL",
+                "signal_action": sig["signal_action"],
+                "signal_bias": sig["signal_bias"],
+                "signal_reason": sig["signal_reason"],
+                "signal_strength": sig["signal_strength"],
+                "router_bias": bias_info["router_bias"],
+                "router_bias_reason": bias_info["router_bias_reason"],
                 "size_mult": size_mult,
                 "allocation_pct": allocation_pct,
                 "allocation_reason": allocation_reason,
@@ -296,7 +330,6 @@ def main():
                 "block_reason": reason,
                 "primary_block_reason": primary_block_reason,
                 "guard_blockers": guard_blockers,
-                "signal_reason": signal_reason,
                 "execution_readiness": readiness,
                 "test_override_applied": override_applied,
                 "source_files": {
@@ -322,7 +355,12 @@ def main():
                 "allowed": allowed,
                 "action": action,
                 "reason": reason,
-                "signal_reason": signal_reason,
+                "signal_action": sig["signal_action"],
+                "signal_bias": sig["signal_bias"],
+                "signal_reason": sig["signal_reason"],
+                "signal_strength": sig["signal_strength"],
+                "router_bias": bias_info["router_bias"],
+                "router_bias_reason": bias_info["router_bias_reason"],
                 "allocation_pct": allocation_pct,
                 "allocation_reason": allocation_reason,
                 "requested_notional_eur": requested_notional_eur,
