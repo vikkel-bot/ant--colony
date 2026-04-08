@@ -1,5 +1,5 @@
 """
-AC53: Controlled rebalance intents (no execution)
+AC53/AC54: Controlled rebalance intents with portfolio-level risk budget.
 Translates AC52 drift rows into explicit, structured rebalance intents.
 GEEN orders, GEEN execution — pure intent generation + observability.
 
@@ -16,9 +16,15 @@ Filtering:
   LOW severity → skipped.
   allocation_pct == 0 and actual == 0 → skipped (no exposure on either side).
 
-Cap:
-  max_rebalance_pct_per_cycle = 0.25 (25% of equity per intent, hardcoded)
-  rebalance_capped_delta_eur  = clamp(delta, -max_eur, +max_eur)
+Per-intent cap (AC53):
+  MAX_REBALANCE_PCT_PER_CYCLE = 0.25 (25% of equity per intent)
+  rebalance_capped_delta_eur  = clamp(delta, ±max_rebalance_eur)
+
+Portfolio-level budget (AC54):
+  MAX_PORTFOLIO_REBALANCE_PCT = 0.30 (30% of equity total across all intents)
+  Intents sorted HIGH → MEDIUM, then by abs(drift_pct) descending.
+  Selected greedily until portfolio_rebalance_budget_eur is exhausted.
+  rebalance_selected = True / False per intent.
 
 Usage: python ant_colony/build_rebalance_intents_lite.py
 """
@@ -41,9 +47,13 @@ TSV_HEADERS = [
     "target_notional_eur", "actual_notional_eur",
     "rebalance_delta_eur", "rebalance_capped_delta_eur",
     "rebalance_cap_applied", "rebalance_reason",
+    "rebalance_selected", "rebalance_budget_reason",
 ]
 
-MAX_REBALANCE_PCT_PER_CYCLE = 0.25
+MAX_REBALANCE_PCT_PER_CYCLE  = 0.25  # per-intent cap (AC53)
+MAX_PORTFOLIO_REBALANCE_PCT  = 0.30  # portfolio-level total cap (AC54)
+
+_SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1}  # lower = higher priority
 
 # Drift status → rebalance action
 _ACTION_MAP = {
@@ -188,20 +198,60 @@ def main():
 
     total_abs_rebalance = round(sum(abs(i["rebalance_capped_delta_eur"]) for i in intents), 2)
 
+    # === AC54: portfolio-level risk budget ===
+    portfolio_budget = round(equity * MAX_PORTFOLIO_REBALANCE_PCT, 2)
+
+    # Sort: HIGH before MEDIUM, then largest abs(drift_pct) first within same severity
+    intents.sort(key=lambda i: (
+        _SEVERITY_ORDER.get(i["drift_severity"], 99),
+        -abs(to_float(i.get("drift_pct", 0.0))),
+    ))
+
+    running_sum    = 0.0
+    selected_count = 0
+    excluded_count = 0
+
+    for intent in intents:
+        abs_delta = abs(to_float(intent.get("rebalance_capped_delta_eur", 0.0)))
+        if portfolio_budget <= 0.0:
+            intent["rebalance_selected"]      = False
+            intent["rebalance_budget_reason"] = "EXCLUDED_BUDGET_LIMIT"
+            excluded_count += 1
+        elif running_sum + abs_delta <= portfolio_budget:
+            intent["rebalance_selected"]      = True
+            intent["rebalance_budget_reason"] = "SELECTED_WITHIN_BUDGET"
+            running_sum = round(running_sum + abs_delta, 2)
+            selected_count += 1
+        else:
+            intent["rebalance_selected"]      = False
+            intent["rebalance_budget_reason"] = "EXCLUDED_BUDGET_LIMIT"
+            excluded_count += 1
+
+    utilization_pct = round(running_sum / max(portfolio_budget, 1.0), 4)
+
     out = {
         "component": "build_rebalance_intents_lite",
         "ts_utc": ts,
         "cycle_id": cycle_id,
         "equity": equity,
+        # Per-intent cap (AC53)
         "max_rebalance_pct_per_cycle": MAX_REBALANCE_PCT_PER_CYCLE,
         "max_rebalance_eur": max_rebalance_eur,
+        "capped_count": capped_count,
+        # Portfolio budget (AC54)
+        "max_portfolio_rebalance_pct": MAX_PORTFOLIO_REBALANCE_PCT,
+        "portfolio_rebalance_budget_eur": portfolio_budget,
+        "portfolio_rebalance_used_eur": round(running_sum, 2),
+        "portfolio_rebalance_utilization_pct": utilization_pct,
+        "selected_count": selected_count,
+        "excluded_count": excluded_count,
+        # Intent counts
         "intents_total": len(intents),
         "increase_count": action_counts["REBALANCE_INCREASE"],
         "reduce_count":   action_counts["REBALANCE_REDUCE"],
         "open_count":     action_counts["REBALANCE_OPEN"],
         "close_count":    action_counts["REBALANCE_CLOSE"],
         "hold_count":     action_counts["REBALANCE_HOLD"],
-        "capped_count":   capped_count,
         "skipped_low_severity": skipped_low,
         "skipped_zero_exposure": skipped_zero,
         "total_abs_rebalance_eur": total_abs_rebalance,
