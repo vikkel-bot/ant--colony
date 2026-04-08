@@ -48,6 +48,13 @@ def safe_str(value, default=""):
     return str(value)
 
 
+def to_float(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def add_reason(reason_counts, reason):
     key = safe_str(reason, "UNKNOWN")
     reason_counts[key] = int(reason_counts.get(key, 0)) + 1
@@ -196,7 +203,7 @@ def main():
 
         edge3_gate = safe_str(edge3.get("gate"), "")
         health_gate = safe_str(health.get("health_gate"), "")
-        size_mult = health.get("health_size_mult", 1.0)
+        size_mult = to_float(health.get("health_size_mult", 1.0), 1.0)
 
         base_allowed = bool(readiness_base.get("allowed", False))
         base_reason = readiness_base.get("reason")
@@ -228,8 +235,6 @@ def main():
                     readiness["allowed"] = True
                     readiness["reason"] = "ALLOW"
 
-            primary_block_reason = guard_blockers[0] if guard_blockers else safe_str(reason, "UNKNOWN")
-
             if override_applied:
                 allowed = True
                 action = test_override["action"]
@@ -248,6 +253,9 @@ def main():
             # Geen ENTER_LONG zonder executie-toestemming
             if not allowed:
                 action = "NO_ACTION"
+
+            # AC41.1: primary_block_reason NA alle mutaties (override, freshness)
+            primary_block_reason = guard_blockers[0] if guard_blockers else safe_str(reason, "UNKNOWN")
 
             position_key = f"{market}__{strategy}"
             decision_id = f"{position_key}_{safe_str(cycle_id, 'NO_CYCLE')}_{action}"

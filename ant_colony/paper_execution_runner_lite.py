@@ -13,6 +13,8 @@ METRICS_PATH = OUT_DIR / "paper_execution_metrics.json"
 SUMMARY_PATH = OUT_DIR / "paper_execution_summary.json"
 MARKET_DATA_PATH = OUT_DIR / "worker_market_data.json"
 
+MIN_NOTIONAL_EUR = 10.0  # AC41.1: stoffilter — geen executie onder dit bedrag
+
 
 def utc_now_ts():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -73,8 +75,7 @@ def main():
     executed_now = 0
     budget_limited_count = 0
 
-    # === FASE 1: Verzamel ENTER_LONG kandidaten ===
-    # EXIT_LONG wordt apart verwerkt (geen budget-impact, geeft cash terug).
+    # === FASE 1: Verzamel kandidaten (geen cash-mutaties) ===
     enter_candidates = []
     exit_candidates = []
 
@@ -123,30 +124,12 @@ def main():
                     "row": row,
                 })
 
-    # === FASE 2: Bepaal granted_notional_eur per kandidaat ===
-    # Proportionele scaling als totaal > beschikbare cash.
-    total_requested_eur = round(sum(c["requested_notional_eur"] for c in enter_candidates), 2)
-    if total_requested_eur > 0 and total_requested_eur > cash:
-        scale = cash / total_requested_eur
-        budget_constrained = True
-    else:
-        scale = 1.0
-        budget_constrained = False
-
-    total_granted_eur = 0.0
-
-    for c in enter_candidates:
-        granted = round(c["requested_notional_eur"] * scale, 2)
-        c["granted_notional_eur"] = granted
-        c["skipped_due_to_budget"] = budget_constrained and granted < c["requested_notional_eur"]
-        c["budget_shortfall_eur"] = round(total_requested_eur - cash, 2) if budget_constrained else 0.0
-
-    # === FASE 3a: Verwerk EXIT_LONG (geeft cash terug, geen budget nodig) ===
+    # === FASE 2: Verwerk EXIT_LONG eerst (cash bijwerken vóór scaling) ===
+    # AC41.1 fix: exits verwerken vóór scaling zodat freed cash meegenomen wordt.
     for c in exit_candidates:
         market = c["market"]
         position_key = c["position_key"]
         decision_id = c["decision_id"]
-        intent = c["intent"]
         reason = c["row"].get("reason")
 
         pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
@@ -196,21 +179,64 @@ def main():
         executed_ids.append(decision_id)
         executed_now += 1
 
-    # === FASE 3b: Verwerk ENTER_LONG op basis van granted_notional_eur ===
+    # === FASE 3: Bepaal granted_notional_eur op post-exit cash ===
+    # AC41.1 fix: scaling gebruikt cash inclusief exit-opbrengsten.
+    total_requested_eur = round(sum(c["requested_notional_eur"] for c in enter_candidates), 2)
+    if total_requested_eur > 0 and total_requested_eur > cash:
+        scale = cash / total_requested_eur
+        budget_constrained = True
+    else:
+        scale = 1.0
+        budget_constrained = False
+
+    total_granted_eur = 0.0
+
+    for c in enter_candidates:
+        granted = round(c["requested_notional_eur"] * scale, 2)
+        c["granted_notional_eur"] = granted
+        # AC41.1 fix: budget_limited_count telt elke partiële toekenning
+        if granted < c["requested_notional_eur"]:
+            c["skipped_due_to_budget"] = True
+            budget_limited_count += 1
+        else:
+            c["skipped_due_to_budget"] = False
+        c["budget_shortfall_eur"] = round(total_requested_eur - cash, 2) if budget_constrained else 0.0
+
+    # === FASE 4: Verwerk ENTER_LONG op granted_notional_eur ===
     for c in enter_candidates:
         market = c["market"]
         position_key = c["position_key"]
         decision_id = c["decision_id"]
-        intent = c["intent"]
         reason = c["row"].get("reason")
-        size_mult = to_float(intent.get("size_mult", 1.0), 1.0)
         granted = c["granted_notional_eur"]
 
-        # AC-41: fail-closed — geen execution zonder granted_notional_eur > 0
-        if granted <= 0.0:
+        # AC41.1: geen pyramiding — skip als positie al LONG is
+        current_pos = positions.get(position_key) or portfolio["positions"].get(position_key) or {}
+        if str(current_pos.get("position", "FLAT")).upper() == "LONG":
             intents_skipped += 1
-            if c["skipped_due_to_budget"]:
-                budget_limited_count += 1
+            append_jsonl(EXECUTION_LOG_PATH, {
+                "ts_utc": ts,
+                "market": market,
+                "action": "SKIP",
+                "decision_id": decision_id,
+                "position_key": position_key,
+                "reason": "ALREADY_IN_POSITION",
+            })
+            continue
+
+        # AC41.1: stoffilter — geen executie onder MIN_NOTIONAL_EUR
+        if granted < MIN_NOTIONAL_EUR:
+            intents_skipped += 1
+            append_jsonl(EXECUTION_LOG_PATH, {
+                "ts_utc": ts,
+                "market": market,
+                "action": "SKIP",
+                "decision_id": decision_id,
+                "position_key": position_key,
+                "granted_notional_eur": granted,
+                "min_notional_eur": MIN_NOTIONAL_EUR,
+                "reason": "DUST_FILTERED",
+            })
             continue
 
         price = to_float(
@@ -220,7 +246,7 @@ def main():
             intents_skipped += 1
             continue
 
-        # Dubbele check: genoeg cash (na EXIT_LONGs kan cash gestegen zijn)
+        # Fail-closed: cash check na EXIT_LONG mutaties
         if cash < granted:
             intents_skipped += 1
             budget_limited_count += 1
