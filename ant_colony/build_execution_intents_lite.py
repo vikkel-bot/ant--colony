@@ -29,6 +29,13 @@ ALLOCATION_MIN_CLOSED_FOR_WINRATE = 3
 SMOOTHING_ALPHA = 0.30   # gewicht nieuw target
 SMOOTHING_RETAIN = 0.70  # gewicht vorige allocatie
 
+# AC48: allocation guardrails en regime-aware caps
+MAX_ALLOCATION_GAP_PER_MARKET = 0.30   # max verschil winner-loser binnen market
+MAX_WINNER_ALLOCATION_PCT     = 0.65   # absolute winner cap (fallback bij onbekend regime)
+REGIME_CAP_TREND    = 0.65             # BULL: mag meer geconcentreerd
+REGIME_CAP_SIDEWAYS = 0.55             # SIDEWAYS: voorzichtiger
+REGIME_CAP_BEAR     = 0.55             # BEAR: gelijk aan sideways
+
 
 def utc_now_ts():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -489,6 +496,8 @@ def build_audit_decision_reason(sr: dict) -> str:
             parts.append(bias_reason)
         if sr.get("smoothing_applied"):
             parts.append("EMA_APPLIED")
+        if sr.get("guardrail_adjusted"):
+            parts.append(f"GUARDRAIL:{safe_str(sr.get('guardrail_reason', ''))}")
     elif not allowed:
         parts = ["BLOCKED"]
         parts.append(safe_str(sr.get("effective_reason") or sr.get("reason", "UNKNOWN")))
@@ -517,6 +526,120 @@ def build_market_decision_reason(active_strategies: list, sr_map: dict) -> str:
     smoothing = bool(sr_map.get(winner, {}).get("smoothing_applied", False))
     suffix = "_AND_SMOOTHING" if smoothing else ""
     return f"{winner}_DOMINANT_AFTER_FEEDBACK{suffix}"
+
+
+# === AC48: allocation guardrails en regime-aware caps ===
+
+def derive_market_regime_cap(edge3: dict) -> tuple:
+    """
+    AC48: bepaal regime_type en bijbehorende allocation cap.
+    Bron: edge3.cb20_trend (BULL / SIDEWAYS / BEAR).
+    Fallback bij onbekend: UNKNOWN → MAX_WINNER_ALLOCATION_PCT.
+    """
+    cb20_trend = safe_str(edge3.get("cb20_trend", "")).upper()
+    if cb20_trend == "BULL":
+        return "TREND", REGIME_CAP_TREND
+    if cb20_trend in ("SIDEWAYS", "SIDE"):
+        return "SIDEWAYS", REGIME_CAP_SIDEWAYS
+    if cb20_trend == "BEAR":
+        return "BEAR", REGIME_CAP_BEAR
+    return "UNKNOWN", MAX_WINNER_ALLOCATION_PCT
+
+
+def apply_allocation_guardrails(
+    market: str,
+    alloc_map: dict,
+    active_strategies: list,
+    regime_type: str,
+    regime_cap: float,
+) -> dict:
+    """
+    AC48: afdwing allocation caps en gap begrenzing per market.
+    Werkt op bijna-finale allocation_pct na smoothing.
+    Stap A: winner cap op regime_cap, excess proportioneel herverdelen.
+    Stap B: gap cap op MAX_ALLOCATION_GAP_PER_MARKET.
+    Stap C: renormalisatie zodat actieve strategieën optellen tot 1.0.
+    Voegt guardrail observability fields toe aan alloc_map.
+    """
+    # Initialiseer guardrail-velden voor alle strategieën
+    for s in alloc_map:
+        alloc_map[s]["allocation_pre_guardrail_pct"] = alloc_map[s]["allocation_pct"]
+        alloc_map[s]["guardrail_adjusted"] = False
+        alloc_map[s]["guardrail_reason"] = "NO_GUARDRAIL_NEEDED"
+        alloc_map[s]["regime_type"] = regime_type
+        alloc_map[s]["regime_cap_pct"] = regime_cap
+
+    n_active = len(active_strategies)
+
+    if n_active == 0:
+        for s in alloc_map:
+            alloc_map[s]["guardrail_reason"] = "NO_ACTIVE_STRATEGIES"
+        return alloc_map
+
+    if n_active == 1:
+        alloc_map[active_strategies[0]]["guardrail_reason"] = "SINGLE_ACTIVE_STRATEGY_NO_REDISTRIBUTION"
+        for s in alloc_map:
+            if s not in active_strategies:
+                alloc_map[s]["guardrail_reason"] = "INACTIVE"
+        return alloc_map
+
+    # n_active >= 2
+    applied_reasons = []
+    pcts = {s: alloc_map[s]["allocation_pct"] for s in active_strategies}
+
+    # Stap A: winner cap
+    winner = max(pcts, key=pcts.get)
+    if pcts[winner] > regime_cap:
+        excess = pcts[winner] - regime_cap
+        pcts[winner] = regime_cap
+        others = [s for s in active_strategies if s != winner]
+        other_total = sum(pcts[s] for s in others)
+        if other_total > 0:
+            for s in others:
+                pcts[s] += excess * (pcts[s] / other_total)
+        else:
+            share = excess / len(others)
+            for s in others:
+                pcts[s] += share
+        applied_reasons.append("WINNER_CAPPED_BY_REGIME")
+
+    # Stap B: gap cap
+    cur_max = max(pcts[s] for s in active_strategies)
+    cur_min = min(pcts[s] for s in active_strategies)
+    if round(cur_max - cur_min, 10) > MAX_ALLOCATION_GAP_PER_MARKET:
+        winner = max(pcts, key=pcts.get)
+        target_winner = cur_min + MAX_ALLOCATION_GAP_PER_MARKET
+        excess = pcts[winner] - target_winner
+        pcts[winner] = target_winner
+        others = [s for s in active_strategies if s != winner]
+        other_total = sum(pcts[s] for s in others)
+        if other_total > 0:
+            for s in others:
+                pcts[s] += excess * (pcts[s] / other_total)
+        else:
+            share = excess / len(others)
+            for s in others:
+                pcts[s] += share
+        applied_reasons.append("GAP_CAPPED")
+
+    # Stap C: renormaliseer
+    total = sum(pcts[s] for s in active_strategies)
+    for s in active_strategies:
+        pcts[s] = round(pcts[s] / total, 6) if total > 0 else round(1.0 / n_active, 6)
+
+    guardrail_reason = "+".join(applied_reasons) if applied_reasons else "NO_GUARDRAIL_NEEDED"
+
+    for s in active_strategies:
+        adjusted = abs(pcts[s] - alloc_map[s]["allocation_pre_guardrail_pct"]) > 1e-9
+        alloc_map[s]["allocation_pct"] = pcts[s]
+        alloc_map[s]["guardrail_adjusted"] = adjusted
+        alloc_map[s]["guardrail_reason"] = guardrail_reason
+
+    for s in alloc_map:
+        if s not in active_strategies:
+            alloc_map[s]["guardrail_reason"] = "INACTIVE"
+
+    return alloc_map
 
 
 def write_queen_allocation_audit(cycle_id, now_ts: str, summary_markets: dict):
@@ -569,13 +692,24 @@ def write_queen_allocation_audit(cycle_id, now_ts: str, summary_markets: dict):
                 "confidence_adjusted_target_pct": sr.get("confidence_adjusted_target_pct"),
                 "allocation_previous_pct": sr.get("allocation_previous_pct"),
                 "allocation_smoothed_pct": sr.get("allocation_smoothed_pct"),
+                "allocation_pre_guardrail_pct": sr.get("allocation_pre_guardrail_pct"),
                 "allocation_pct": sr.get("allocation_pct"),
+                "guardrail_adjusted": sr.get("guardrail_adjusted"),
+                "guardrail_reason": sr.get("guardrail_reason"),
+                "regime_type": sr.get("regime_type"),
+                "regime_cap_pct": sr.get("regime_cap_pct"),
                 "requested_notional_eur": sr.get("requested_notional_eur"),
                 "audit_decision_reason": build_audit_decision_reason(sr),
             }
 
         audit_markets[market] = {
             "market_allocation_mode": mkt.get("market_allocation_mode"),
+            "market_regime_type": mkt.get("market_regime_type"),
+            "market_regime_cap_pct": mkt.get("market_regime_cap_pct"),
+            "market_pre_guardrail_gap": mkt.get("market_pre_guardrail_gap"),
+            "market_post_guardrail_gap": mkt.get("market_post_guardrail_gap"),
+            "market_guardrail_applied": mkt.get("market_guardrail_applied"),
+            "market_guardrail_reason": mkt.get("market_guardrail_reason"),
             "active_strategies": active,
             "allocation_sum": alloc_sum,
             "winner_strategy": winner,
@@ -782,6 +916,49 @@ def main():
                     "smoothing_reason": "SMOOTHING_FALLBACK_TO_TARGET",
                 })
 
+        # === STAP 2c: AC48 allocation guardrails ===
+        regime_type, regime_cap_pct = derive_market_regime_cap(edge3)
+
+        if active_strategies:
+            _pre_pcts = [alloc_map[s]["allocation_pct"] for s in active_strategies]
+            market_pre_guardrail_gap = round(max(_pre_pcts) - min(_pre_pcts), 6) if len(_pre_pcts) >= 2 else 0.0
+        else:
+            market_pre_guardrail_gap = 0.0
+
+        guardrail_fallback = False
+        try:
+            alloc_map = apply_allocation_guardrails(
+                market, alloc_map, active_strategies, regime_type, regime_cap_pct
+            )
+        except Exception:
+            guardrail_fallback = True
+            for s in alloc_map:
+                if "allocation_pre_guardrail_pct" not in alloc_map[s]:
+                    alloc_map[s].update({
+                        "allocation_pre_guardrail_pct": alloc_map[s]["allocation_pct"],
+                        "guardrail_adjusted": False,
+                        "guardrail_reason": "GUARDRAIL_FALLBACK_TO_PRE_GUARDRAIL",
+                        "regime_type": regime_type,
+                        "regime_cap_pct": regime_cap_pct,
+                    })
+
+        if active_strategies:
+            _post_pcts = [alloc_map[s]["allocation_pct"] for s in active_strategies]
+            market_post_guardrail_gap = round(max(_post_pcts) - min(_post_pcts), 6) if len(_post_pcts) >= 2 else 0.0
+        else:
+            market_post_guardrail_gap = 0.0
+
+        market_guardrail_applied = (not guardrail_fallback) and any(
+            alloc_map[s].get("guardrail_adjusted", False) for s in ENABLED_STRATEGIES
+        )
+        market_guardrail_reason = (
+            "GUARDRAIL_FALLBACK_TO_PRE_GUARDRAIL" if guardrail_fallback
+            else next(
+                (alloc_map[s].get("guardrail_reason", "NO_ACTIVE_STRATEGIES") for s in active_strategies),
+                "NO_ACTIVE_STRATEGIES"
+            )
+        )
+
         # === STAP 3: bouw intents en strategy_results ===
         strategy_results = {}
 
@@ -854,6 +1031,11 @@ def main():
                 "confidence_gate_reason": alloc.get("confidence_gate_reason", "NO_CONFIDENCE_GATE_DATA"),
                 "smoothing_applied": alloc.get("smoothing_applied", False),
                 "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
+                "allocation_pre_guardrail_pct": alloc.get("allocation_pre_guardrail_pct", allocation_pct),
+                "guardrail_adjusted": alloc.get("guardrail_adjusted", False),
+                "guardrail_reason": alloc.get("guardrail_reason", "NO_GUARDRAIL_NEEDED"),
+                "regime_type": alloc.get("regime_type", "UNKNOWN"),
+                "regime_cap_pct": alloc.get("regime_cap_pct", MAX_WINNER_ALLOCATION_PCT),
                 "requested_notional_eur": requested_notional_eur,
                 "edge3_gate": edge3_gate or None,
                 "health_gate": health_gate or None,
@@ -921,6 +1103,11 @@ def main():
                 "confidence_gate_reason": alloc.get("confidence_gate_reason", "NO_CONFIDENCE_GATE_DATA"),
                 "smoothing_applied": alloc.get("smoothing_applied", False),
                 "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
+                "allocation_pre_guardrail_pct": alloc.get("allocation_pre_guardrail_pct", allocation_pct),
+                "guardrail_adjusted": alloc.get("guardrail_adjusted", False),
+                "guardrail_reason": alloc.get("guardrail_reason", "NO_GUARDRAIL_NEEDED"),
+                "regime_type": alloc.get("regime_type", "UNKNOWN"),
+                "regime_cap_pct": alloc.get("regime_cap_pct", MAX_WINNER_ALLOCATION_PCT),
                 "requested_notional_eur": requested_notional_eur,
                 "test_override_applied": ev["override_applied"],
                 "intent_file": str(out_path),
@@ -943,6 +1130,12 @@ def main():
                 for s in ENABLED_STRATEGIES
             ), 6),
             "market_allocation_mode": smoothing_mode,
+            "market_regime_type": regime_type,
+            "market_regime_cap_pct": regime_cap_pct,
+            "market_pre_guardrail_gap": market_pre_guardrail_gap,
+            "market_post_guardrail_gap": market_post_guardrail_gap,
+            "market_guardrail_applied": market_guardrail_applied,
+            "market_guardrail_reason": market_guardrail_reason,
             "strategies": strategy_results,
         }
 
