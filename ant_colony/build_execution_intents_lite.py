@@ -11,16 +11,21 @@ PORTFOLIO_SUMMARY_PATH = OUT_DIR / "paper_portfolio_summary.json"
 PORTFOLIO_STATE_PATH = OUT_DIR / "paper_portfolio_state.json"
 WORKER_SELECTION_PATH = OUT_DIR / "worker_strategy_selection.json"
 STRATEGY_FEEDBACK_STATE_PATH = OUT_DIR / "strategy_feedback_state.json"
+ALLOCATION_MEMORY_STATE_PATH = OUT_DIR / "allocation_memory_state.json"
 
 # AC-40: enabled strategieën per markt
 ENABLED_STRATEGIES = ["EDGE3", "EDGE4"]
 
-# AC44: allocation bias parameters (expliciet, aanpasbaar)
+# AC44: allocation bias parameters
 ALLOCATION_WEIGHT_MIN = 0.25
 ALLOCATION_WEIGHT_MAX = 1.75
 ALLOCATION_SCORE_BIAS = 0.25
 ALLOCATION_WINRATE_BIAS = 0.25
 ALLOCATION_MIN_CLOSED_FOR_WINRATE = 3
+
+# AC45: smoothing parameters (EMA: smoothed = prev * RETAIN + target * ALPHA)
+SMOOTHING_ALPHA = 0.30   # gewicht nieuw target
+SMOOTHING_RETAIN = 0.70  # gewicht vorige allocatie
 
 
 def utc_now_ts():
@@ -161,10 +166,7 @@ def eval_strategy_signal(strategy: str, edge3_gate: str, health_gate: str) -> di
 
 
 def derive_router_bias(strategy: str, edge3_gate: str, health_gate: str) -> dict:
-    """
-    AC42: router bias — expliciete voorkeur of suppressie per strategie.
-    EDGE4 krijgt FAVOR als EDGE3 geblokkeerd is maar health OK.
-    """
+    """AC42: router bias — EDGE4 krijgt FAVOR als EDGE3 geblokkeerd en health OK."""
     if strategy == "EDGE4" and edge3_gate != "ALLOW" and health_gate == "ALLOW":
         return {"router_bias": "FAVOR", "router_bias_reason": "EDGE4_ACTIVE_WHEN_EDGE3_BLOCKED"}
     return {"router_bias": "NEUTRAL", "router_bias_reason": "NO_BIAS"}
@@ -173,7 +175,7 @@ def derive_router_bias(strategy: str, edge3_gate: str, health_gate: str) -> dict
 # === AC44: feedback-aware allocation helpers ===
 
 def load_strategy_feedback_state() -> dict:
-    """AC44: laad strategy_keys uit strategy_feedback_state.json. Leeg dict bij ontbrekend bestand."""
+    """AC44: laad strategy_keys uit strategy_feedback_state.json."""
     obj, err = load_json(STRATEGY_FEEDBACK_STATE_PATH)
     if err or not isinstance(obj, dict):
         return {}
@@ -182,21 +184,15 @@ def load_strategy_feedback_state() -> dict:
 
 
 def get_feedback_for_key(feedback_keys: dict, position_key: str) -> dict:
-    """AC44: haal feedback entry op voor position_key, of lege dict als niet gevonden."""
+    """AC44: haal feedback entry op voor position_key, lege dict als niet gevonden."""
     return feedback_keys.get(position_key) or {}
 
 
 def derive_allocation_weight(fb: dict) -> tuple:
     """
     AC44: bepaal raw en geclamped allocation weight uit feedback state.
-    Formule:
-      base = 1.0
-      score > 0 → +0.25 (POSITIVE_SCORE)
-      score < 0 → -0.25 (NEGATIVE_SCORE)
-      closed >= 3 en wins > losses → +0.25 (WINRATE_ADVANTAGE)
-      closed >= 3 en losses > wins → -0.25 (LOSSRATE_PENALTY)
-      clamp naar [0.25, 1.75]
-    Fallback bij lege fb: (1.0, 1.0, "NO_FEEDBACK_STATE")
+    base=1.0, score±0.25, winrate±0.25 (>=3 closed), clamp [0.25, 1.75].
+    Fallback bij lege fb: (1.0, 1.0, "NO_FEEDBACK_STATE").
     """
     if not fb:
         return 1.0, 1.0, "NO_FEEDBACK_STATE"
@@ -234,15 +230,13 @@ def derive_allocation_weight(fb: dict) -> tuple:
 
 def normalize_market_allocations(market: str, strategy_eval: dict, feedback_keys: dict) -> tuple:
     """
-    AC44: normaliseer allocatie per markt over actieve strategieën.
+    AC44: normaliseer allocatie per markt over actieve strategieën (som = 1.0).
     Actief = effective_action == ENTER_LONG.
-    Geeft (alloc_map, active_strategies_list) terug.
-    alloc_map: {strategy -> allocation fields + feedback observability}
+    Geeft (alloc_map, active_strategies_list).
     """
     active = [s for s in strategy_eval if strategy_eval[s]["effective_action"] == "ENTER_LONG"]
     alloc_map = {}
 
-    # Bereken gewichten voor actieve strategieën
     weights = {}
     for s in active:
         position_key = f"{market}__{s}"
@@ -262,14 +256,12 @@ def normalize_market_allocations(market: str, strategy_eval: dict, feedback_keys
             "allocation_pct": 0.0,
         }
 
-    # Normaliseer over actieve strategieën (som = 1.0)
     total_weight = sum(weights.values())
     for s in active:
         alloc_map[s]["allocation_pct"] = (
             round(weights[s] / total_weight, 6) if total_weight > 0 else 0.0
         )
 
-    # Inactieve strategieën: 0 allocatie, maar feedback-state wel zichtbaar
     for s in strategy_eval:
         if s in alloc_map:
             continue
@@ -291,18 +283,114 @@ def normalize_market_allocations(market: str, strategy_eval: dict, feedback_keys
     return alloc_map, active
 
 
+# === AC45: allocation memory en smoothing ===
+
+def load_allocation_memory_state() -> dict:
+    """
+    AC45: laad allocation_memory_state.json.
+    Geeft dict {position_key: {previous_allocation_pct, last_update_ts}} of leeg dict.
+    """
+    obj, err = load_json(ALLOCATION_MEMORY_STATE_PATH)
+    if err or not isinstance(obj, dict):
+        return {}
+    return obj
+
+
+def save_allocation_memory_state(memory_state: dict):
+    """AC45: schrijf allocation_memory_state.json. Stille mislukking bij write-error."""
+    try:
+        ALLOCATION_MEMORY_STATE_PATH.write_text(
+            json.dumps(memory_state, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def smooth_market_allocations(market: str, alloc_map: dict, memory_state: dict,
+                               active_strategies: list) -> dict:
+    """
+    AC45: EMA-smoothing per actieve strategie, gevolgd door renormalisatie.
+    smoothed = previous * SMOOTHING_RETAIN + target * SMOOTHING_ALPHA
+    Som actieve allocation_pct = 1.0 na renormalisatie.
+    Inactieve strategieën: allocation_pct = 0.0, geen memory gewist.
+    """
+    # Inactieve strategieën: vul smoothing-velden in zonder te smoothen
+    for s in alloc_map:
+        if s not in active_strategies:
+            alloc_map[s]["allocation_target_pct"] = 0.0
+            alloc_map[s]["allocation_previous_pct"] = None
+            alloc_map[s]["allocation_smoothed_pct"] = 0.0
+            alloc_map[s]["smoothing_applied"] = False
+            alloc_map[s]["smoothing_reason"] = "INACTIVE_NO_SMOOTHING"
+
+    if not active_strategies:
+        return alloc_map
+
+    # Stap 1: bereken smoothed pct per actieve strategie
+    smoothed_pcts = {}
+    for strategy in active_strategies:
+        position_key = f"{market}__{strategy}"
+        target_pct = alloc_map[strategy]["allocation_pct"]
+
+        mem = memory_state.get(position_key) or {}
+        raw_prev = mem.get("previous_allocation_pct")
+
+        if raw_prev is None:
+            previous_pct = None
+            smoothed = target_pct
+            smoothing_applied = False
+            smoothing_reason = "NO_PREVIOUS_ALLOCATION"
+        else:
+            try:
+                previous_pct = float(raw_prev)
+                smoothed = round(
+                    previous_pct * SMOOTHING_RETAIN + target_pct * SMOOTHING_ALPHA, 6
+                )
+                smoothing_applied = True
+                smoothing_reason = "EMA_APPLIED"
+            except (TypeError, ValueError):
+                previous_pct = None
+                smoothed = target_pct
+                smoothing_applied = False
+                smoothing_reason = "INVALID_PREVIOUS_ALLOCATION"
+
+        alloc_map[strategy]["allocation_target_pct"] = target_pct
+        alloc_map[strategy]["allocation_previous_pct"] = previous_pct
+        alloc_map[strategy]["allocation_smoothed_pct"] = round(smoothed, 6)
+        alloc_map[strategy]["smoothing_applied"] = smoothing_applied
+        alloc_map[strategy]["smoothing_reason"] = smoothing_reason
+        smoothed_pcts[strategy] = smoothed
+
+    # Stap 2: renormaliseer zodat som actieve strategieën = 1.0
+    total_smoothed = sum(smoothed_pcts.values())
+    if total_smoothed > 0:
+        for strategy in active_strategies:
+            alloc_map[strategy]["allocation_pct"] = round(
+                smoothed_pcts[strategy] / total_smoothed, 6
+            )
+    else:
+        # Fallback: gelijke verdeling (zou niet mogen voorkomen)
+        equal_pct = round(1.0 / len(active_strategies), 6)
+        for strategy in active_strategies:
+            alloc_map[strategy]["allocation_pct"] = equal_pct
+            alloc_map[strategy]["smoothing_reason"] += "+FALLBACK_EQUAL_DIST"
+
+    return alloc_map
+
+
 def main():
     combined, combined_err = load_json(COMBINED_STATUS_PATH)
     portfolio_summary = load_portfolio_summary()
     portfolio_cash = load_portfolio_state_cash()
     worker_selection_map, worker_selection_err = load_worker_selection_map()
-    feedback_keys = load_strategy_feedback_state()  # AC44
+    feedback_keys = load_strategy_feedback_state()     # AC44
+    memory_state = load_allocation_memory_state()       # AC45
     now_ts = utc_now_ts()
     test_override = load_test_override()
 
     if combined_err or not isinstance(combined, dict):
         summary = {
-            "version": "execution_summary_v11",
+            "version": "execution_summary_v12",
             "ts_utc": now_ts,
             "source_component": "build_execution_intents_lite",
             "combined_status_ok": False,
@@ -337,6 +425,7 @@ def main():
     blocked_count = 0
     reason_counts = {}
     total_requested_eur = 0.0
+    memory_updates = {}  # AC45: write-back voor actieve position_keys
 
     freshness_block = freshness_block_active(portfolio_summary)
     base_notional = min(1000.0, portfolio_cash * 0.10)
@@ -371,7 +460,6 @@ def main():
             allowed = base_allowed
             reason = base_reason
 
-            # AC39: EDGE4 niet geblokkeerd door EDGE3-gate
             if strategy == "EDGE4":
                 guard_blockers = [b for b in guard_blockers if not str(b).startswith("EDGE3_")]
                 if safe_str(reason) == "GATE_BLOCKED" and health_gate == "ALLOW":
@@ -386,7 +474,6 @@ def main():
                 reason = test_override["reason"]
                 readiness["allowed"] = True
                 readiness["reason"] = test_override["reason"]
-                # signal-velden NIET overschreven — override is een test-artefact
 
             if freshness_block:
                 allowed = False
@@ -431,6 +518,25 @@ def main():
             market, strategy_eval, feedback_keys
         )
 
+        # === STAP 2b: AC45 smoothing + renormalisatie ===
+        smoothing_mode = "FEEDBACK_BIASED_SMOOTHED"
+        try:
+            alloc_map = smooth_market_allocations(
+                market, alloc_map, memory_state, active_strategies
+            )
+        except Exception:
+            # Fallback: gebruik target allocaties, voeg lege smoothing-velden toe
+            smoothing_mode = "SMOOTHING_FALLBACK_TO_TARGET"
+            for s in alloc_map:
+                target = alloc_map[s].get("allocation_pct", 0.0)
+                alloc_map[s].update({
+                    "allocation_target_pct": target,
+                    "allocation_previous_pct": None,
+                    "allocation_smoothed_pct": target,
+                    "smoothing_applied": False,
+                    "smoothing_reason": "SMOOTHING_FALLBACK_TO_TARGET",
+                })
+
         # === STAP 3: bouw intents en strategy_results ===
         strategy_results = {}
 
@@ -453,8 +559,15 @@ def main():
             requested_notional_eur = round(base_notional * size_mult * allocation_pct, 2)
             total_requested_eur = round(total_requested_eur + requested_notional_eur, 2)
 
+            # AC45: write-back alleen voor actieve strategieën
+            if effective_action == "ENTER_LONG":
+                memory_updates[position_key] = {
+                    "previous_allocation_pct": allocation_pct,
+                    "last_update_ts": now_ts,
+                }
+
             intent = {
-                "version": "execution_intent_v9",
+                "version": "execution_intent_v10",
                 "ts_utc": now_ts,
                 "source_component": "build_execution_intents_lite",
                 "cycle_id": cycle_id,
@@ -482,9 +595,14 @@ def main():
                 "feedback_loss_count": alloc["feedback_loss_count"],
                 "allocation_weight_raw": alloc["allocation_weight_raw"],
                 "allocation_weight_clamped": alloc["allocation_weight_clamped"],
+                "allocation_target_pct": alloc.get("allocation_target_pct", allocation_pct),
+                "allocation_previous_pct": alloc.get("allocation_previous_pct"),
+                "allocation_smoothed_pct": alloc.get("allocation_smoothed_pct", allocation_pct),
                 "allocation_pct": allocation_pct,
                 "allocation_bias_reason": allocation_bias_reason,
                 "allocation_reason": allocation_reason,
+                "smoothing_applied": alloc.get("smoothing_applied", False),
+                "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
                 "requested_notional_eur": requested_notional_eur,
                 "edge3_gate": edge3_gate or None,
                 "health_gate": health_gate or None,
@@ -500,6 +618,7 @@ def main():
                     "test_override": str(TEST_OVERRIDE_PATH),
                     "portfolio_summary": str(PORTFOLIO_SUMMARY_PATH),
                     "strategy_feedback_state": str(STRATEGY_FEEDBACK_STATE_PATH),
+                    "allocation_memory_state": str(ALLOCATION_MEMORY_STATE_PATH),
                 },
                 "source_meta": {
                     "combined_status_version": combined_version,
@@ -509,6 +628,7 @@ def main():
                     "portfolio_all_prices_fresh": bool(portfolio_summary.get("all_prices_fresh", False)),
                     "worker_selection_error": worker_selection_err,
                     "feedback_keys_loaded": len(feedback_keys),
+                    "memory_keys_loaded": len(memory_state),
                 },
             }
 
@@ -535,9 +655,14 @@ def main():
                 "feedback_loss_count": alloc["feedback_loss_count"],
                 "allocation_weight_raw": alloc["allocation_weight_raw"],
                 "allocation_weight_clamped": alloc["allocation_weight_clamped"],
+                "allocation_target_pct": alloc.get("allocation_target_pct", allocation_pct),
+                "allocation_previous_pct": alloc.get("allocation_previous_pct"),
+                "allocation_smoothed_pct": alloc.get("allocation_smoothed_pct", allocation_pct),
                 "allocation_pct": allocation_pct,
                 "allocation_bias_reason": allocation_bias_reason,
                 "allocation_reason": allocation_reason,
+                "smoothing_applied": alloc.get("smoothing_applied", False),
+                "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
                 "requested_notional_eur": requested_notional_eur,
                 "test_override_applied": ev["override_applied"],
                 "intent_file": str(out_path),
@@ -559,12 +684,20 @@ def main():
                 strategy_results.get(s, {}).get("allocation_pct", 0.0)
                 for s in ENABLED_STRATEGIES
             ), 6),
-            "market_allocation_mode": "FEEDBACK_BIASED",
+            "market_allocation_mode": smoothing_mode,
             "strategies": strategy_results,
         }
 
+    # === AC45: write-back memory state (alleen actieve strategieën) ===
+    try:
+        for pk, entry in memory_updates.items():
+            memory_state[pk] = entry
+        save_allocation_memory_state(memory_state)
+    except Exception:
+        pass
+
     summary = {
-        "version": "execution_summary_v11",
+        "version": "execution_summary_v12",
         "ts_utc": now_ts,
         "source_component": "build_execution_intents_lite",
         "combined_status_ok": True,
@@ -577,6 +710,7 @@ def main():
         "total_requested_eur": total_requested_eur,
         "portfolio_cash_snapshot": portfolio_cash,
         "feedback_keys_loaded": len(feedback_keys),
+        "memory_keys_loaded": len(memory_state),
         "freshness_ok": bool(combined_freshness.get("freshness_ok", False)),
         "freshness_breakdown": {
             "edge3_fresh": combined_freshness.get("edge3_fresh"),
@@ -591,7 +725,7 @@ def main():
         "markets": summary_markets,
     }
 
-    # === SIGNAL VISIBILITY (per strategie, inclusief allocation bias) ===
+    # === SIGNAL VISIBILITY ===
     try:
         visibility = {}
         for mkt in sorted(markets.keys()):
