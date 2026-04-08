@@ -378,6 +378,96 @@ def smooth_market_allocations(market: str, alloc_map: dict, memory_state: dict,
     return alloc_map
 
 
+# === AC46: confidence gating helpers ===
+
+def derive_feedback_confidence(fb: dict) -> tuple:
+    """
+    AC46: bereken confidence score [0.0, 1.0] op basis van feedback sample size.
+    Geeft (confidence, reason).
+    """
+    if not fb:
+        return 0.0, "NO_FEEDBACK_STATE"
+
+    closed = int(fb.get("closed_trade_count", 0) or 0)
+    trade_count = int(fb.get("trade_count", 0) or 0)
+    win_count = int(fb.get("win_count", 0) or 0)
+    loss_count = int(fb.get("loss_count", 0) or 0)
+
+    confidence = 0.0
+    if closed >= 1:
+        confidence += 0.35
+    if closed >= 3:
+        confidence += 0.35
+    if trade_count >= 5:
+        confidence += 0.15
+    if win_count + loss_count >= 3:
+        confidence += 0.15
+
+    confidence = max(0.0, min(1.0, confidence))
+
+    if confidence >= 0.85:
+        reason = "HIGH_CONFIDENCE"
+    elif confidence >= 0.50:
+        reason = "MEDIUM_CONFIDENCE"
+    else:
+        reason = "LOW_SAMPLE_CONFIDENCE"
+
+    return round(confidence, 4), reason
+
+
+def apply_confidence_gating(market: str, alloc_map: dict, active_strategies: list,
+                             feedback_keys: dict) -> dict:
+    """
+    AC46: trek biased target richting neutraal op basis van confidence per strategie.
+    confidence_adjusted = neutral_pct + confidence * (biased_pct - neutral_pct)
+    Renormaliseert actieve strategieën na aanpassing.
+    """
+    n_active = len(active_strategies)
+
+    # Inactieve strategieën: vul confidence-velden in zonder aanpassing
+    for s in alloc_map:
+        if s not in active_strategies:
+            alloc_map[s]["feedback_confidence"] = 0.0
+            alloc_map[s]["neutral_target_pct"] = 0.0
+            alloc_map[s]["biased_target_pct"] = 0.0
+            alloc_map[s]["confidence_adjusted_target_pct"] = 0.0
+            alloc_map[s]["confidence_gate_applied"] = False
+            alloc_map[s]["confidence_gate_reason"] = "INACTIVE"
+
+    if not active_strategies:
+        return alloc_map
+
+    neutral_pct = round(1.0 / n_active, 6)
+    adjusted_pcts = {}
+
+    for strategy in active_strategies:
+        position_key = f"{market}__{strategy}"
+        fb = get_feedback_for_key(feedback_keys, position_key)
+        confidence, confidence_reason = derive_feedback_confidence(fb)
+        biased_pct = alloc_map[strategy]["allocation_pct"]
+        adjusted = round(neutral_pct + confidence * (biased_pct - neutral_pct), 6)
+
+        alloc_map[strategy]["feedback_confidence"] = confidence
+        alloc_map[strategy]["neutral_target_pct"] = neutral_pct
+        alloc_map[strategy]["biased_target_pct"] = biased_pct
+        alloc_map[strategy]["confidence_adjusted_target_pct"] = adjusted
+        alloc_map[strategy]["confidence_gate_applied"] = confidence < 1.0
+        alloc_map[strategy]["confidence_gate_reason"] = confidence_reason
+        adjusted_pcts[strategy] = adjusted
+
+    # Renormaliseer zodat som actieve strategieën = 1.0
+    total_adjusted = sum(adjusted_pcts.values())
+    for strategy in active_strategies:
+        if total_adjusted > 0:
+            alloc_map[strategy]["allocation_pct"] = round(
+                adjusted_pcts[strategy] / total_adjusted, 6
+            )
+        else:
+            alloc_map[strategy]["allocation_pct"] = neutral_pct
+
+    return alloc_map
+
+
 def main():
     combined, combined_err = load_json(COMBINED_STATUS_PATH)
     portfolio_summary = load_portfolio_summary()
@@ -390,7 +480,7 @@ def main():
 
     if combined_err or not isinstance(combined, dict):
         summary = {
-            "version": "execution_summary_v12",
+            "version": "execution_summary_v13",
             "ts_utc": now_ts,
             "source_component": "build_execution_intents_lite",
             "combined_status_ok": False,
@@ -518,8 +608,14 @@ def main():
             market, strategy_eval, feedback_keys
         )
 
+        # === STAP 2a: AC46 confidence gating ===
+        try:
+            alloc_map = apply_confidence_gating(market, alloc_map, active_strategies, feedback_keys)
+        except Exception:
+            pass  # Fallback: gebruik biased allocaties ongewijzigd
+
         # === STAP 2b: AC45 smoothing + renormalisatie ===
-        smoothing_mode = "FEEDBACK_BIASED_SMOOTHED"
+        smoothing_mode = "FEEDBACK_BIASED_CONFIDENCE_GATED_SMOOTHED"
         try:
             alloc_map = smooth_market_allocations(
                 market, alloc_map, memory_state, active_strategies
@@ -567,7 +663,7 @@ def main():
                 }
 
             intent = {
-                "version": "execution_intent_v10",
+                "version": "execution_intent_v11",
                 "ts_utc": now_ts,
                 "source_component": "build_execution_intents_lite",
                 "cycle_id": cycle_id,
@@ -601,6 +697,12 @@ def main():
                 "allocation_pct": allocation_pct,
                 "allocation_bias_reason": allocation_bias_reason,
                 "allocation_reason": allocation_reason,
+                "feedback_confidence": alloc.get("feedback_confidence", 0.0),
+                "neutral_target_pct": alloc.get("neutral_target_pct", 0.0),
+                "biased_target_pct": alloc.get("biased_target_pct", allocation_pct),
+                "confidence_adjusted_target_pct": alloc.get("confidence_adjusted_target_pct", allocation_pct),
+                "confidence_gate_applied": alloc.get("confidence_gate_applied", False),
+                "confidence_gate_reason": alloc.get("confidence_gate_reason", "NO_CONFIDENCE_GATE_DATA"),
                 "smoothing_applied": alloc.get("smoothing_applied", False),
                 "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
                 "requested_notional_eur": requested_notional_eur,
@@ -661,6 +763,12 @@ def main():
                 "allocation_pct": allocation_pct,
                 "allocation_bias_reason": allocation_bias_reason,
                 "allocation_reason": allocation_reason,
+                "feedback_confidence": alloc.get("feedback_confidence", 0.0),
+                "neutral_target_pct": alloc.get("neutral_target_pct", 0.0),
+                "biased_target_pct": alloc.get("biased_target_pct", allocation_pct),
+                "confidence_adjusted_target_pct": alloc.get("confidence_adjusted_target_pct", allocation_pct),
+                "confidence_gate_applied": alloc.get("confidence_gate_applied", False),
+                "confidence_gate_reason": alloc.get("confidence_gate_reason", "NO_CONFIDENCE_GATE_DATA"),
                 "smoothing_applied": alloc.get("smoothing_applied", False),
                 "smoothing_reason": alloc.get("smoothing_reason", "NO_SMOOTHING_DATA"),
                 "requested_notional_eur": requested_notional_eur,
@@ -697,7 +805,7 @@ def main():
         pass
 
     summary = {
-        "version": "execution_summary_v12",
+        "version": "execution_summary_v13",
         "ts_utc": now_ts,
         "source_component": "build_execution_intents_lite",
         "combined_status_ok": True,
