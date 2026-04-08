@@ -1,5 +1,5 @@
 """
-AC51: Allocation vs portfolio drift control
+AC51/AC52: Allocation vs portfolio drift control + interpretation layer
 Pure observability — measures drift between queen allocation targets and actual portfolio
 exposure per position_key. No rebalancing, no orders, no execution changes.
 
@@ -44,7 +44,7 @@ OUT_TSV_PATH = OUT_DIR / "allocation_portfolio_drift.tsv"
 TSV_HEADERS = [
     "market", "strategy", "position_key",
     "allocation_pct", "actual_notional_eur", "target_notional_eur",
-    "drift_pct", "drift_status",
+    "drift_pct", "drift_status", "drift_cause", "drift_severity", "drift_suggested_action",
 ]
 
 DRIFT_THRESHOLD = 0.05  # 5% of equity
@@ -54,6 +54,21 @@ DRIFT_OVER            = "OVER_ALLOCATED"
 DRIFT_UNDER           = "UNDER_ALLOCATED"
 DRIFT_NO_POSITION     = "NO_POSITION"
 DRIFT_UNEXPECTED      = "UNEXPECTED_POSITION"
+
+# AC52: drift cause constants
+CAUSE_EQUITY_GROWTH      = "EQUITY_GROWTH_DRIFT"
+CAUSE_PRICE_MOVEMENT     = "PRICE_MOVEMENT_DRIFT"
+CAUSE_MISSED_EXECUTION   = "MISSED_EXECUTION_DRIFT"
+CAUSE_NO_POSITION        = "NO_POSITION_DRIFT"
+CAUSE_UNEXPECTED         = "UNEXPECTED_POSITION_DRIFT"
+CAUSE_UNKNOWN            = "UNKNOWN_DRIFT"
+
+# Reconciliation statuses that indicate missed/incomplete execution
+_MISSED_RECON_STATUSES = frozenset({
+    "NO_SAME_CYCLE_EXECUTION", "MISSING_EXECUTION_EVIDENCE",
+    "SKIPPED_BLOCKED", "SKIPPED_NO_ACTION", "SKIPPED_OTHER",
+    "CROSS_CYCLE_EVIDENCE", "NOT_REQUESTED",
+})
 
 
 def utc_now_ts():
@@ -89,6 +104,78 @@ def write_tsv(path: Path, headers: list, rows: list):
             for h in headers
         ))
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def interpret_drift(drift_status: str, drift_pct: float, recon_status) -> tuple:
+    """
+    AC52: Returns (drift_cause, drift_severity, drift_suggested_action).
+    Fully deterministic — no heuristics, only the rules below.
+
+    Cause rules (priority order):
+      UNEXPECTED_POSITION           → UNEXPECTED_POSITION_DRIFT
+      NO_POSITION                   → NO_POSITION_DRIFT
+      recon in _MISSED_RECON        → MISSED_EXECUTION_DRIFT
+      FULLY_EXECUTED + under        → EQUITY_GROWTH_DRIFT
+      FULLY_EXECUTED + over         → PRICE_MOVEMENT_DRIFT
+      default                       → UNKNOWN_DRIFT
+
+    Severity: abs(drift_pct) < 0.05 → LOW, < 0.20 → MEDIUM, >= 0.20 → HIGH
+
+    Suggested action:
+      LOW severity                  → IGNORE
+      DRIFT_OK                      → NO_ACTION
+      UNDER_ALLOCATED + MEDIUM      → INCREASE_POSITION
+      UNDER_ALLOCATED + HIGH        → URGENT_INCREASE
+      OVER_ALLOCATED  + MEDIUM      → REDUCE_POSITION
+      OVER_ALLOCATED  + HIGH        → URGENT_REDUCE
+      NO_POSITION     + HIGH        → URGENT_OPEN
+      NO_POSITION     + MEDIUM      → OPEN_POSITION
+      UNEXPECTED      + HIGH        → URGENT_CLOSE
+      UNEXPECTED      + MEDIUM      → CLOSE_POSITION
+      default                       → REVIEW
+    """
+    recon = str(recon_status or "")
+    abs_drift = abs(drift_pct)
+
+    # --- cause ---
+    if drift_status == DRIFT_UNEXPECTED:
+        cause = CAUSE_UNEXPECTED
+    elif drift_status == DRIFT_NO_POSITION:
+        cause = CAUSE_NO_POSITION
+    elif recon in _MISSED_RECON_STATUSES:
+        cause = CAUSE_MISSED_EXECUTION
+    elif recon == "FULLY_EXECUTED" and drift_pct < -DRIFT_THRESHOLD:
+        cause = CAUSE_EQUITY_GROWTH
+    elif recon == "FULLY_EXECUTED" and drift_pct > DRIFT_THRESHOLD:
+        cause = CAUSE_PRICE_MOVEMENT
+    else:
+        cause = CAUSE_UNKNOWN
+
+    # --- severity ---
+    if abs_drift < DRIFT_THRESHOLD:
+        severity = "LOW"
+    elif abs_drift < 0.20:
+        severity = "MEDIUM"
+    else:
+        severity = "HIGH"
+
+    # --- suggested action ---
+    if drift_status == DRIFT_OK:
+        action = "NO_ACTION"
+    elif severity == "LOW":
+        action = "IGNORE"
+    elif drift_status == DRIFT_UNDER:
+        action = "URGENT_INCREASE" if severity == "HIGH" else "INCREASE_POSITION"
+    elif drift_status == DRIFT_OVER:
+        action = "URGENT_REDUCE" if severity == "HIGH" else "REDUCE_POSITION"
+    elif drift_status == DRIFT_NO_POSITION:
+        action = "URGENT_OPEN" if severity == "HIGH" else "OPEN_POSITION"
+    elif drift_status == DRIFT_UNEXPECTED:
+        action = "URGENT_CLOSE" if severity == "HIGH" else "CLOSE_POSITION"
+    else:
+        action = "REVIEW"
+
+    return cause, severity, action
 
 
 def classify_drift(actual: float, target: float, drift_pct: float) -> tuple:
@@ -134,7 +221,9 @@ def main():
 
     rows = []
     seen_position_keys = set()
-    status_counts = {}
+    status_counts  = {}
+    severity_counts = {}
+    cause_counts    = {}
 
     for market in sorted(markets_data.keys()):
         strategies_data = (markets_data[market].get("strategies") or {})
@@ -174,7 +263,14 @@ def main():
             drift_pct = round(drift_eur / max(equity, 1.0), 6)
 
             drift_status, drift_reason = classify_drift(actual_notional, target_notional, drift_pct)
-            status_counts[drift_status] = status_counts.get(drift_status, 0) + 1
+            recon_status = recon_index.get(position_key)
+            drift_cause, drift_severity, drift_suggested_action = interpret_drift(
+                drift_status, drift_pct, recon_status
+            )
+
+            status_counts[drift_status]     = status_counts.get(drift_status, 0) + 1
+            severity_counts[drift_severity] = severity_counts.get(drift_severity, 0) + 1
+            cause_counts[drift_cause]       = cause_counts.get(drift_cause, 0) + 1
 
             rows.append({
                 "market": market,
@@ -188,9 +284,12 @@ def main():
                 "drift_pct": drift_pct,
                 "drift_status": drift_status,
                 "drift_reason": drift_reason,
+                "drift_cause": drift_cause,
+                "drift_severity": drift_severity,
+                "drift_suggested_action": drift_suggested_action,
                 "effective_action": effective_action,
                 "execution_allowed": execution_allowed,
-                "reconciliation_status": recon_index.get(position_key),
+                "reconciliation_status": recon_status,
                 "equity_used": equity,
             })
 
@@ -210,8 +309,14 @@ def main():
 
         drift_eur = round(actual_notional, 2)  # target=0, drift=actual
         drift_pct = round(drift_eur / max(equity, 1.0), 6)
+        recon_status = recon_index.get(position_key)
+        drift_cause, drift_severity, drift_suggested_action = interpret_drift(
+            DRIFT_UNEXPECTED, drift_pct, recon_status
+        )
 
-        status_counts[DRIFT_UNEXPECTED] = status_counts.get(DRIFT_UNEXPECTED, 0) + 1
+        status_counts[DRIFT_UNEXPECTED]     = status_counts.get(DRIFT_UNEXPECTED, 0) + 1
+        severity_counts[drift_severity]     = severity_counts.get(drift_severity, 0) + 1
+        cause_counts[drift_cause]           = cause_counts.get(drift_cause, 0) + 1
 
         rows.append({
             "market": market,
@@ -225,9 +330,12 @@ def main():
             "drift_pct": drift_pct,
             "drift_status": DRIFT_UNEXPECTED,
             "drift_reason": "POSITION_WITHOUT_TARGET",
+            "drift_cause": drift_cause,
+            "drift_severity": drift_severity,
+            "drift_suggested_action": drift_suggested_action,
             "effective_action": None,
             "execution_allowed": None,
-            "reconciliation_status": recon_index.get(position_key),
+            "reconciliation_status": recon_status,
             "equity_used": equity,
         })
 
@@ -236,6 +344,7 @@ def main():
 
     out = {
         "component": "allocation_portfolio_drift_lite",
+        "version": "drift_v2",
         "ts_utc": ts,
         "cycle_id": cycle_id,
         "equity": equity,
@@ -246,6 +355,11 @@ def main():
         "no_position_count": status_counts.get(DRIFT_NO_POSITION, 0),
         "unexpected_position_count": status_counts.get(DRIFT_UNEXPECTED, 0),
         "status_counts": status_counts,
+        "low_severity_count": severity_counts.get("LOW", 0),
+        "medium_severity_count": severity_counts.get("MEDIUM", 0),
+        "high_severity_count": severity_counts.get("HIGH", 0),
+        "severity_counts": severity_counts,
+        "cause_counts": cause_counts,
         "total_abs_drift_eur": total_abs_drift_eur,
         "total_abs_drift_pct": total_abs_drift_pct,
         "rows": rows,
