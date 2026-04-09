@@ -87,6 +87,10 @@ CONFLICT_RATE_REVIEW   = _ac66_review.get("review_conflict_block_rate_warn",    
 LOW_CONF_RATE_REVIEW   = _ac66_review.get("review_low_conf_blocked_rate_warn",   0.50)
 AVG_DELTA_WATCH        = _ac66_review.get("review_avg_delta_watch",              0.02)
 
+# AC69: usage watch bands — sourced from policy (fail-closed to inline defaults)
+MEMORY_APPLIED_RATE_LOW_WATCH  = _ac66_review.get("review_memory_applied_rate_low_watch",  0.10)
+MEMORY_APPLIED_RATE_HIGH_WATCH = _ac66_review.get("review_memory_applied_rate_high_watch", 0.80)
+
 # ---------------------------------------------------------------------------
 # Recommendation labels
 # ---------------------------------------------------------------------------
@@ -272,10 +276,10 @@ def assess_usage(metrics: dict) -> tuple:
         f"AVAILABLE={metrics['memory_available_count']}/{metrics['total']}",
         f"BLOCKED_RATE={metrics['memory_blocked_rate']:.4f}",
     ]
-    if applied < 0.10:
+    if applied < MEMORY_APPLIED_RATE_LOW_WATCH:
         reasons.append("MEMORY_RARELY_APPLIED")
         return ASSESS_WATCH, reasons
-    if applied > 0.80:
+    if applied > MEMORY_APPLIED_RATE_HIGH_WATCH:
         reasons.append("MEMORY_VERY_FREQUENTLY_APPLIED")
         return ASSESS_WATCH, reasons
     return ASSESS_HEALTHY, reasons

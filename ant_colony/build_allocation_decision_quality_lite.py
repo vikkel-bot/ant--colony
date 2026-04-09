@@ -124,6 +124,12 @@ _RECENT_HARMFUL_THRESHOLD  = _ac64_gate.get("recent_harmful_block_threshold", 2)
 # AC64: conflict mode — sourced from policy
 _CONFLICT_POLICY_MODE = _ac64_gate.get("conflict_policy_mode", "BLOCK_ON_CONFLICT")
 
+# AC69: bias-class signal thresholds — sourced from policy (fail-closed to inline defaults)
+_BIAS_CAUTION_SIGNAL_THRESHOLD  = _ac64_gate.get("bias_caution_signal_threshold",  -0.50)
+_BIAS_CAUTION_HARMFUL_RATIO     = _ac64_gate.get("bias_caution_harmful_ratio",      0.60)
+_BIAS_NEGATIVE_SIGNAL_THRESHOLD = _ac64_gate.get("bias_negative_signal_threshold", -0.20)
+_BIAS_POSITIVE_SIGNAL_THRESHOLD = _ac64_gate.get("bias_positive_signal_threshold",  0.20)
+
 # Score weights (must sum to ≤ 1.0 for positive terms)
 W_DRIFT      = 0.40
 W_CONVICTION = 0.35
@@ -202,12 +208,12 @@ def _memory_modifier_from_rec(memory_rec: dict) -> tuple:
     net_signal    = (helpful - harmful) / n
     eff_signal    = round(net_signal * mem_conf, 4)
 
-    # Same priority rules as AC-61
-    if eff_signal <= -0.50 or harmful_ratio >= 0.60:
+    # Same priority rules as AC-61 (thresholds sourced from policy via AC-69)
+    if eff_signal <= _BIAS_CAUTION_SIGNAL_THRESHOLD or harmful_ratio >= _BIAS_CAUTION_HARMFUL_RATIO:
         return MODIFIER_CAUTION, "NEGATIVE_CAUTION"
-    if eff_signal <= -0.20:
+    if eff_signal <= _BIAS_NEGATIVE_SIGNAL_THRESHOLD:
         return MODIFIER_NEGATIVE, "NEGATIVE"
-    if eff_signal >= 0.20:
+    if eff_signal >= _BIAS_POSITIVE_SIGNAL_THRESHOLD:
         return MODIFIER_POSITIVE, "POSITIVE"
     return MODIFIER_NEUTRAL, "NEUTRAL"
 

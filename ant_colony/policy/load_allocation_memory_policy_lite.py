@@ -58,11 +58,17 @@ DEFAULT_POLICY: dict = {
             "recent_harmful_lookback":         3,
             "recent_harmful_block_threshold":  2,
             "conflict_policy_mode":            "BLOCK_ON_CONFLICT",
+            "bias_caution_signal_threshold":  -0.50,
+            "bias_caution_harmful_ratio":      0.60,
+            "bias_negative_signal_threshold": -0.20,
+            "bias_positive_signal_threshold":  0.20,
         },
         "memory_rolling_window": {
             "window_size":              10,
             "full_memory_at":           8,
             "cooldown_cycles_default":  3,
+            "memory_min_confidence":    0.40,
+            "sparse_window_threshold":  3,
         },
         "review_thresholds": {
             "review_min_records":                   5,
@@ -73,6 +79,8 @@ DEFAULT_POLICY: dict = {
             "review_conflict_block_rate_warn":      0.30,
             "review_low_conf_blocked_rate_warn":    0.50,
             "review_avg_delta_watch":               0.02,
+            "review_memory_applied_rate_low_watch":  0.10,
+            "review_memory_applied_rate_high_watch": 0.80,
         },
     },
 }

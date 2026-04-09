@@ -76,8 +76,9 @@ WINDOW_SIZE             = _ac63_window.get("window_size",             10)
 FULL_MEMORY_AT          = _ac63_window.get("full_memory_at",          8)
 COOLDOWN_PERSIST_CYCLES = _ac63_window.get("cooldown_cycles_default", 3)
 
-# Not-policy hardcoded constants (no policy key exists for these; AC-68 scope excludes them)
-MEMORY_MIN_CONFIDENCE = 0.40  # below this → INSUFFICIENT (no positive bias)
+# AC69: status-classification thresholds — sourced from policy (fail-closed to inline defaults)
+MEMORY_MIN_CONFIDENCE  = _ac63_window.get("memory_min_confidence",   0.40)
+_SPARSE_WINDOW_MIN     = _ac63_window.get("sparse_window_threshold",  3)
 
 # AC-60 labels
 _READY_OUTCOME_LABELS = {"HELPFUL", "NEUTRAL", "HARMFUL"}
@@ -125,7 +126,7 @@ def compute_memory_confidence(window_size: int) -> float:
 def memory_status_for(window_size: int, memory_confidence: float) -> str:
     if window_size == 0:
         return MEMORY_STATUS_BOOTSTRAP
-    if window_size < 3:
+    if window_size < _SPARSE_WINDOW_MIN:
         return MEMORY_STATUS_SPARSE
     if memory_confidence < MEMORY_MIN_CONFIDENCE:
         return MEMORY_STATUS_INSUFFICIENT
