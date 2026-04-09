@@ -663,6 +663,25 @@ _ADVISORY_ELIGIBLE_RECS: frozenset = frozenset({
     "CANDIDATE_FOR_MANUAL_TRIAL",
 })
 
+# AC-75: Stable reason codes for the queen intake contract.
+# These are the canonical codes; the free-form advisory_reason string
+# provides human-readable detail but this code is machine-stable.
+_ADVISORY_REASON_CODES: dict = {
+    # ADVISORY_ACTIVE paths
+    "WORTH_REVIEW":               "ACTIVE_WORTH_REVIEW",
+    "CANDIDATE_FOR_MANUAL_TRIAL": "ACTIVE_CANDIDATE_FOR_TRIAL",
+    # BASELINE_HOLD paths (used as keys for HOLD resolution)
+    "_HOLD_NO_CANDIDATES":               "HOLD_NO_CANDIDATES",
+    "_HOLD_ALL_REJECTED_OR_INSUFFICIENT": "HOLD_ALL_REJECTED_OR_INSUFFICIENT",
+    "_HOLD_ALL_NO_CHANGE":               "HOLD_ALL_NO_CHANGE",
+    "_HOLD_NO_SUITABLE_CANDIDATE":       "HOLD_NO_SUITABLE_CANDIDATE",
+    "_HOLD_NO_ELIGIBLE_REC":             "HOLD_NO_ELIGIBLE_REC",
+}
+
+# Version tag for the queen intake contract shape.
+# Bump when field names or semantics change.
+QUEEN_INTAKE_CONTRACT_VERSION: str = "v1"
+
 
 def build_allocation_advisory(
     evaluation_summary: dict,
@@ -680,12 +699,15 @@ def build_allocation_advisory(
     HIGH_RISK / TOO_RISKY / INSUFFICIENT_DATA / NO_CHANGE are never advisory-active.
 
     Returns a dict with:
-      advisory_status           — "ADVISORY_ACTIVE" | "BASELINE_HOLD"
-      advisory_scenario_id      — scenario_id of advisory (or "baseline")
-      advisory_action           — "CONSIDER_VARIANT" | "KEEP_CURRENT_POLICY"
-      advisory_confidence       — float [0.0, 1.0]
-      advisory_reason           — short deterministic explanation string
-      advisory_simulation_only  — always True (explicit safety marker)
+      advisory_status                — "ADVISORY_ACTIVE" | "BASELINE_HOLD"
+      advisory_scenario_id           — scenario_id of advisory (or "baseline")
+      advisory_action                — "CONSIDER_VARIANT" | "KEEP_CURRENT_POLICY"
+      advisory_confidence            — float [0.0, 1.0]
+      advisory_reason                — short deterministic explanation string
+      advisory_simulation_only       — always True (explicit safety marker)
+      advisory_reason_code           — stable machine-readable code (AC-75)
+      queen_intake_ready             — True iff ADVISORY_ACTIVE (AC-75)
+      queen_intake_contract_version  — shape version tag (AC-75)
     """
     best_id   = evaluation_summary.get("best_candidate_scenario_id")
     best_rec  = evaluation_summary.get("best_candidate_recommendation")
@@ -701,43 +723,54 @@ def build_allocation_advisory(
         n_changed = adv_comp.get("changed_parameters_count", 0) if adv_comp else 0
 
         return {
-            "advisory_status":          "ADVISORY_ACTIVE",
-            "advisory_scenario_id":     best_id,
-            "advisory_action":          "CONSIDER_VARIANT",
-            "advisory_confidence":      confidence,
-            "advisory_reason":          (
+            "advisory_status":               "ADVISORY_ACTIVE",
+            "advisory_scenario_id":          best_id,
+            "advisory_action":               "CONSIDER_VARIANT",
+            "advisory_confidence":           confidence,
+            "advisory_reason":               (
                 f"{best_rec}|risk={best_risk}"
                 f"|changed_params={n_changed}"
                 f"|basis={n_comps}_scenarios"
             ),
-            "advisory_simulation_only": True,
+            "advisory_simulation_only":      True,
+            "advisory_reason_code":          _ADVISORY_REASON_CODES.get(best_rec, "ACTIVE_UNKNOWN"),
+            "queen_intake_ready":            True,
+            "queen_intake_contract_version": QUEEN_INTAKE_CONTRACT_VERSION,
         }
 
     # Baseline-hold path: explain why no advisory was generated
     parts: list = []
     if n_comps == 0:
+        hold_code = "_HOLD_NO_CANDIDATES"
         parts.append("NO_CANDIDATES_SIMULATED")
     elif best_id is None:
         rej   = evaluation_summary.get("rejected_count", 0)
         insuf = evaluation_summary.get("insufficient_data_count", 0)
         nc    = evaluation_summary.get("no_change_count", 0)
         if rej + insuf == n_comps:
+            hold_code = "_HOLD_ALL_REJECTED_OR_INSUFFICIENT"
             parts.append(f"ALL_{n_comps}_REJECTED_OR_INSUFFICIENT")
         elif nc == n_comps:
+            hold_code = "_HOLD_ALL_NO_CHANGE"
             parts.append(f"ALL_{n_comps}_NO_CHANGE")
         else:
+            hold_code = "_HOLD_NO_SUITABLE_CANDIDATE"
             parts.append("NO_SUITABLE_CANDIDATE")
     else:
+        hold_code = "_HOLD_NO_ELIGIBLE_REC"
         parts.append(f"NO_ELIGIBLE_RECOMMENDATION_rec={best_rec}")
     parts.append(f"basis={n_comps}_scenarios")
 
     return {
-        "advisory_status":          "BASELINE_HOLD",
-        "advisory_scenario_id":     "baseline",
-        "advisory_action":          "KEEP_CURRENT_POLICY",
-        "advisory_confidence":      1.00,
-        "advisory_reason":          "|".join(parts),
-        "advisory_simulation_only": True,
+        "advisory_status":               "BASELINE_HOLD",
+        "advisory_scenario_id":          "baseline",
+        "advisory_action":               "KEEP_CURRENT_POLICY",
+        "advisory_confidence":           1.00,
+        "advisory_reason":               "|".join(parts),
+        "advisory_simulation_only":      True,
+        "advisory_reason_code":          _ADVISORY_REASON_CODES.get(hold_code, "HOLD_UNKNOWN"),
+        "queen_intake_ready":            False,
+        "queen_intake_contract_version": QUEEN_INTAKE_CONTRACT_VERSION,
     }
 
 
