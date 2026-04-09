@@ -1,0 +1,41 @@
+{
+  "_comment": "AC-67 policy abstraction — baseline defaults mirroring AC-63/64/65/66 hardcoded constants exactly. DO NOT edit live; use candidate simulation (AC-67) to evaluate alternatives.",
+  "policy_name": "baseline_default",
+  "policy_version": "v1",
+  "description": "Default memory policy — mirrors AC-63/64/65/66 hardcoded constants exactly. Conservative, fail-closed, asymmetric (memory as brake not motor).",
+  "paper_only": true,
+  "effective_from": "2026-04-09",
+  "groups": {
+    "memory_gate": {
+      "_comment": "AC-64 apply_memory_gate constants",
+      "memory_confidence_min_negative": 0.50,
+      "memory_confidence_min_positive": 0.75,
+      "negative_blend_weight":          0.50,
+      "positive_blend_weight":          0.30,
+      "negative_correction_cap":        0.05,
+      "positive_correction_cap":        0.03,
+      "modifier_band_min":              0.90,
+      "modifier_band_max":              1.05,
+      "recent_harmful_lookback":        3,
+      "recent_harmful_block_threshold": 2,
+      "conflict_policy_mode":           "BLOCK_ON_CONFLICT"
+    },
+    "memory_rolling_window": {
+      "_comment": "AC-63 build_allocation_feedback_memory_lite constants",
+      "window_size":             10,
+      "full_memory_at":          8,
+      "cooldown_cycles_default": 3
+    },
+    "review_thresholds": {
+      "_comment": "AC-66 build_allocation_memory_policy_review_lite constants",
+      "review_min_records":                  5,
+      "review_positive_applied_rate_warn":   0.30,
+      "review_positive_applied_rate_watch":  0.20,
+      "review_negative_applied_rate_warn":   0.70,
+      "review_cooldown_rate_warn":           0.50,
+      "review_conflict_block_rate_warn":     0.30,
+      "review_low_conf_blocked_rate_warn":   0.50,
+      "review_avg_delta_watch":              0.02
+    }
+  }
+}

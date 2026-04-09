@@ -80,3 +80,5 @@ backup/
 !*.schema.json
 !*.example.json
 !package-lock.json
+# AC-67 policy abstraction — static policy files are source-controlled
+!ant_colony/policy/*.json
