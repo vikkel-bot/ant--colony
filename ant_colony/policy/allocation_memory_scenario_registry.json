@@ -1,0 +1,96 @@
+{
+  "_comment": "AC-72 scenario registry. Stores ONLY overlay diffs vs canonical baseline — no full policy values. Each scenario_id is stable and must not be renamed without a registry schema bump.",
+  "schema_version": "1",
+  "registry_name": "allocation_memory_scenarios",
+  "description": "Named policy scenarios for controlled what-if simulation. The baseline scenario has an empty overlay and reads all values from the canonical policy file. Variant scenarios store only the parameters that differ from baseline.",
+  "scenarios": [
+    {
+      "scenario_id": "baseline",
+      "scenario_name": "baseline_default",
+      "description": "Canonical baseline — all values from allocation_memory_policy.json, no overlay applied.",
+      "scenario_type": "baseline",
+      "overlay": {}
+    },
+    {
+      "scenario_id": "stricter_positive_gate",
+      "scenario_name": "stricter_positive_gate",
+      "description": "Raise positive gate confidence 0.75→0.85 (fewer positive corrections).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "memory_confidence_min_positive": 0.85
+        }
+      }
+    },
+    {
+      "scenario_id": "looser_positive_gate",
+      "scenario_name": "looser_positive_gate",
+      "description": "Lower positive gate confidence 0.75→0.60 (more positive corrections).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "memory_confidence_min_positive": 0.60
+        }
+      }
+    },
+    {
+      "scenario_id": "stronger_negative_dampening",
+      "scenario_name": "stronger_negative_dampening",
+      "description": "Increase negative blend 0.50→0.70 and cap 0.05→0.07 (stronger braking).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "negative_blend_weight": 0.70,
+          "negative_correction_cap": 0.07
+        }
+      }
+    },
+    {
+      "scenario_id": "weaker_negative_dampening",
+      "scenario_name": "weaker_negative_dampening",
+      "description": "Decrease negative blend 0.50→0.25 and cap 0.05→0.025 (gentler braking).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "negative_blend_weight": 0.25,
+          "negative_correction_cap": 0.025
+        }
+      }
+    },
+    {
+      "scenario_id": "higher_memory_confidence_threshold",
+      "scenario_name": "higher_memory_confidence_threshold",
+      "description": "Raise negative gate confidence 0.50→0.65 (memory acts less often).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "memory_confidence_min_negative": 0.65
+        }
+      }
+    },
+    {
+      "scenario_id": "conflict_allow_on_positive",
+      "scenario_name": "conflict_allow_on_positive",
+      "description": "Allow positive memory when cycle is negative (loosen conflict gate).",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "conflict_policy_mode": "ALLOW_ON_CONFLICT"
+        }
+      }
+    },
+    {
+      "scenario_id": "unsafe_extreme",
+      "scenario_name": "unsafe_extreme",
+      "description": "Extreme parameters beyond safe limits — expected HIGH_RISK/TOO_RISKY.",
+      "scenario_type": "variant",
+      "overlay": {
+        "memory_gate": {
+          "positive_correction_cap": 0.15,
+          "negative_blend_weight": 0.95,
+          "negative_correction_cap": 0.15
+        }
+      }
+    }
+  ]
+}

@@ -66,7 +66,15 @@ def _import_canonical_loader():
     _spec.loader.exec_module(_mod)
     return _mod
 
+def _import_scenario_registry():
+    _path = Path(__file__).parent / "policy" / "load_scenario_registry_lite.py"
+    _spec = _ilu.spec_from_file_location("_registry_loader", _path)
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
 _canonical_loader = _import_canonical_loader()
+_registry_loader  = _import_scenario_registry()
 
 # Re-export for test/caller compatibility: sim.DEFAULT_POLICY and sim.load_policy()
 DEFAULT_POLICY = copy.deepcopy(_canonical_loader.DEFAULT_POLICY)
@@ -582,8 +590,13 @@ def build_simulation(
                 deltas_detected += 1
 
             comparisons.append({
+                # AC-72: stable scenario identity + fingerprint
+                "scenario_id":                    spec.get("scenario_id", spec["policy_name"]),
+                "scenario_type":                  spec.get("scenario_type", "variant"),
+                "fingerprint":                    _canonical_loader.policy_fingerprint(cand_policy),
+                # Existing fields
                 "policy_name":                    spec["policy_name"],
-                "policy_description":             spec.get("policy_description", ""),
+                "policy_description":             spec.get("policy_description", spec.get("description", "")),
                 "changed_parameters":             changed,
                 "policy_safe":                    is_safe,
                 "policy_safe_violations":         unsafe_reasons,
@@ -644,13 +657,33 @@ def main() -> None:
     # Load baseline policy (fail-closed)
     baseline_policy, fallback_used, policy_load_reason = load_policy(POLICY_PATH)
 
-    # Load external candidate specs (optional — supplement BUILTIN_CANDIDATES)
+    # AC-72: load scenario registry as primary source for candidate specs.
+    # Fail-closed: if registry unavailable, falls back to BUILTIN_CANDIDATES.
+    registry_scenarios, reg_fallback, reg_reason = _registry_loader.load_registry()
+    variant_scenarios = _registry_loader.get_variant_scenarios(registry_scenarios)
+
+    if variant_scenarios:
+        # Convert registry format to simulator candidate_spec format (add compat fields)
+        candidate_specs = [
+            {
+                **s,
+                "policy_name":        s.get("scenario_id", s.get("scenario_name", "unknown")),
+                "policy_description": s.get("description", ""),
+            }
+            for s in variant_scenarios
+        ]
+        registry_source = "REGISTRY"
+    else:
+        # Fallback to builtin candidates if registry produced nothing
+        candidate_specs = list(BUILTIN_CANDIDATES)
+        registry_source = "BUILTIN_FALLBACK"
+
+    # Load external candidate specs (optional — supplement active candidate_specs)
     extra_candidates: list = []
     ext_data, ext_err = load_json_file(CANDIDATES_PATH, None)
     if ext_data and isinstance(ext_data, dict) and "candidates" in ext_data:
         extra_candidates = ext_data["candidates"]
-
-    candidate_specs = BUILTIN_CANDIDATES + extra_candidates
+        candidate_specs = candidate_specs + extra_candidates
 
     # Load AC-65 observability records
     obs_data, obs_err = load_json_file(OBS_PATH, None)
@@ -661,19 +694,32 @@ def main() -> None:
     # Run simulation
     simulation = build_simulation(obs_records, baseline_policy, candidate_specs)
 
+    baseline_fingerprint = _canonical_loader.policy_fingerprint(baseline_policy)
+
     out = {
         "component":  "build_allocation_memory_policy_simulation_lite",
         "version":    VERSION,
         "ts_utc":     ts,
         "paper_only": True,
         "source_files": {
-            "obs_path":    str(OBS_PATH),
-            "policy_path": str(POLICY_PATH),
+            "obs_path":      str(OBS_PATH),
+            "policy_path":   str(POLICY_PATH),
+            "registry_path": str(_registry_loader.REGISTRY_PATH),
         },
         "policy_load_info": {
             "fallback_used":        fallback_used,
             "policy_load_reason":   policy_load_reason,
+            "baseline_fingerprint": baseline_fingerprint,
             "external_candidates":  len(extra_candidates),
+        },
+        # AC-72: registry metadata
+        "registry_info": {
+            "registry_source":       registry_source,
+            "registry_fallback_used": reg_fallback,
+            "registry_reason":       reg_reason,
+            "scenarios_total":       len(registry_scenarios),
+            "variant_scenarios":     len(variant_scenarios),
+            "scenario_ids":          _registry_loader.get_scenario_ids(registry_scenarios),
         },
         "simulation_config": {
             "simulation_method":     "gate_reclassification_v1",
