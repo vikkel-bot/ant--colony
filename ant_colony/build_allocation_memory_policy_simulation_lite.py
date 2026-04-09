@@ -546,6 +546,106 @@ def generate_recommendation(
 
 
 # ---------------------------------------------------------------------------
+# AC-73: Scenario evaluation + recommendation ranking
+# ---------------------------------------------------------------------------
+
+# Ordinal ranking: lower = more actionable / less risky.
+_RECOMMENDATION_RANK: dict = {
+    "CANDIDATE_FOR_MANUAL_TRIAL": 1,
+    "WORTH_REVIEW":               2,
+    "NO_CHANGE":                  3,
+    "INSUFFICIENT_DATA":          4,
+    "TOO_RISKY":                  5,
+}
+
+
+def _evaluation_reason_for(comp: dict) -> str:
+    """
+    Build a short, human-readable reason string for a comparison entry.
+    Used in evaluate_scenario_comparisons(); not part of the core scoring.
+    """
+    rec   = comp.get("policy_recommendation", "")
+    risk  = comp.get("policy_risk_class", "")
+    n_ch  = comp.get("changed_parameters_count", 0)
+    delta = comp.get("delta_vs_baseline") or {}
+    risk_reasons = comp.get("simulation_reasons") or []
+
+    if rec == "TOO_RISKY":
+        first = risk_reasons[0] if risk_reasons else risk
+        return f"HIGH_RISK|{first}"
+    if rec == "INSUFFICIENT_DATA":
+        n = comp.get("simulated_records_total", 0)
+        return f"INSUFFICIENT_DATA|records={n}"
+    if rec == "NO_CHANGE":
+        return f"LOW_RISK_NO_DELTA|changed_params={n_ch}"
+    if rec == "WORTH_REVIEW":
+        d_pos = _to_float(delta.get("positive_applied_rate", 0.0))
+        d_neg = _to_float(delta.get("negative_applied_rate", 0.0))
+        return f"{risk}|NOTABLE_DELTA|d_pos={d_pos:+.4f}|d_neg={d_neg:+.4f}"
+    if rec == "CANDIDATE_FOR_MANUAL_TRIAL":
+        d_pos = _to_float(delta.get("positive_applied_rate", 0.0))
+        return f"MEDIUM_RISK_VIABLE|d_pos={d_pos:+.4f}|changed_params={n_ch}"
+    return f"{rec}|{risk}"
+
+
+def evaluate_scenario_comparisons(comparisons: list) -> tuple:
+    """
+    Enrich comparison entries with evaluation fields and build a top-level summary.
+
+    Each entry is enriched with:
+      risk_rank         — int (1=most actionable, 5=rejected); see _RECOMMENDATION_RANK
+      evaluation_reason — short explanatory string
+
+    Returns:
+      (enriched_comparisons: list, scenario_evaluation_summary: dict)
+
+    Pure function — input list is not mutated; returns new list.
+    Deterministic: tie-breaking within same rank is by scenario_id (alphabetical).
+    """
+    enriched: list = []
+    for comp in comparisons:
+        ec = dict(comp)
+        rec = ec.get("policy_recommendation", "")
+        ec["risk_rank"]        = _RECOMMENDATION_RANK.get(rec, 99)
+        ec["evaluation_reason"] = _evaluation_reason_for(ec)
+        enriched.append(ec)
+
+    # Ranked order: (risk_rank, scenario_id) for determinism
+    ranked = sorted(enriched, key=lambda c: (c["risk_rank"], c.get("scenario_id", "")))
+
+    # Best candidate: first with rank <= 2 (CANDIDATE_FOR_MANUAL_TRIAL or WORTH_REVIEW)
+    best = next((c for c in ranked if c["risk_rank"] <= 2), None)
+
+    rejected     = sorted(c["scenario_id"] for c in enriched
+                          if c.get("policy_recommendation") == "TOO_RISKY"
+                          and c.get("scenario_id"))
+    insufficient = sorted(c["scenario_id"] for c in enriched
+                          if c.get("policy_recommendation") == "INSUFFICIENT_DATA"
+                          and c.get("scenario_id"))
+
+    summary = {
+        "comparison_count":               len(comparisons),
+        "best_candidate_scenario_id":     best["scenario_id"] if best else None,
+        "best_candidate_recommendation":  best.get("policy_recommendation") if best else None,
+        "best_candidate_risk_class":      best.get("policy_risk_class") if best else None,
+        "rejected_scenarios":             rejected,
+        "rejected_count":                 len(rejected),
+        "insufficient_data_scenarios":    insufficient,
+        "insufficient_data_count":        len(insufficient),
+        "worth_review_count":             sum(1 for c in enriched
+                                              if c.get("policy_recommendation") == "WORTH_REVIEW"),
+        "no_change_count":                sum(1 for c in enriched
+                                              if c.get("policy_recommendation") == "NO_CHANGE"),
+        "candidate_for_trial_count":      sum(1 for c in enriched
+                                              if c.get("policy_recommendation") == "CANDIDATE_FOR_MANUAL_TRIAL"),
+        "ranked_scenario_ids":            [c.get("scenario_id", c.get("policy_name", ""))
+                                           for c in ranked],
+    }
+
+    return enriched, summary
+
+
+# ---------------------------------------------------------------------------
 # Main simulation builder (importable for tests)
 # ---------------------------------------------------------------------------
 
@@ -639,11 +739,15 @@ def build_simulation(
         "recommendations_generated_count": completed,
     }
 
+    # AC-73: enrich comparisons with risk_rank/evaluation_reason; build evaluation summary
+    enriched_comparisons, evaluation_summary = evaluate_scenario_comparisons(comparisons)
+
     return {
-        "summary":            summary,
-        "baseline_policy":    flat_base,
-        "baseline_metrics":   base_metrics,
-        "policy_comparisons": comparisons,
+        "summary":                     summary,
+        "baseline_policy":             flat_base,
+        "baseline_metrics":            base_metrics,
+        "policy_comparisons":          enriched_comparisons,
+        "scenario_evaluation_summary": evaluation_summary,
     }
 
 
@@ -727,10 +831,11 @@ def main() -> None:
             "external_candidates":   len(extra_candidates),
             "baseline_policy_name":  baseline_policy.get("policy_name", "baseline_default"),
         },
-        "summary":            simulation["summary"],
-        "baseline_policy":    simulation["baseline_policy"],
-        "baseline_metrics":   simulation["baseline_metrics"],
-        "candidate_policies": simulation["policy_comparisons"],
+        "summary":                     simulation["summary"],
+        "scenario_evaluation_summary": simulation["scenario_evaluation_summary"],
+        "baseline_policy":             simulation["baseline_policy"],
+        "baseline_metrics":            simulation["baseline_metrics"],
+        "candidate_policies":          simulation["policy_comparisons"],
     }
 
     try:
@@ -741,10 +846,15 @@ def main() -> None:
         print(f"[WARN] Could not write output: {e}")
 
     print(json.dumps({k: v for k, v in out.items() if k != "candidate_policies"}, indent=2))
-    print(f"\n  policy_comparisons ({len(simulation['policy_comparisons'])} candidates):")
-    for c in simulation["policy_comparisons"]:
+    ev = simulation["scenario_evaluation_summary"]
+    print(f"\n  best_candidate: {ev.get('best_candidate_scenario_id')} "
+          f"({ev.get('best_candidate_recommendation')})")
+    print(f"  rejected: {ev.get('rejected_scenarios')}")
+    print(f"\n  policy_comparisons ({len(simulation['policy_comparisons'])} candidates, ranked):")
+    for c in sorted(simulation["policy_comparisons"],
+                    key=lambda x: (x.get("risk_rank", 99), x.get("scenario_id", ""))):
         print(
-            f"    {c['policy_name']:<35}"
+            f"    [{c.get('risk_rank', '?')}] {c.get('scenario_id', c['policy_name']):<38}"
             f" risk={c.get('policy_risk_class', '?'):<16}"
             f" rec={c.get('policy_recommendation', '?')}"
         )
