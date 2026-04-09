@@ -646,6 +646,102 @@ def evaluate_scenario_comparisons(comparisons: list) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# AC-74: Allocation advisory layer
+# ---------------------------------------------------------------------------
+
+# Advisory confidence per actionable recommendation.
+# These are fixed, conservative values — not computed from returns.
+_ADVISORY_CONFIDENCE: dict = {
+    "CANDIDATE_FOR_MANUAL_TRIAL": 0.70,
+    "WORTH_REVIEW":               0.50,
+}
+
+# Recommendations that are safe to surface as an advisory.
+# HIGH_RISK/TOO_RISKY, INSUFFICIENT_DATA, and NO_CHANGE never qualify.
+_ADVISORY_ELIGIBLE_RECS: frozenset = frozenset({
+    "WORTH_REVIEW",
+    "CANDIDATE_FOR_MANUAL_TRIAL",
+})
+
+
+def build_allocation_advisory(
+    evaluation_summary: dict,
+    comparisons: list,
+) -> dict:
+    """
+    Translate scenario evaluation output into an allocation advisory.
+
+    Advisory is STRICTLY simulation-only and read-only.
+    It carries no execution coupling; advisory_simulation_only=True is always set.
+
+    Eligible scenarios (WORTH_REVIEW / CANDIDATE_FOR_MANUAL_TRIAL) become
+    ADVISORY_ACTIVE. Any other outcome → BASELINE_HOLD.
+
+    HIGH_RISK / TOO_RISKY / INSUFFICIENT_DATA / NO_CHANGE are never advisory-active.
+
+    Returns a dict with:
+      advisory_status           — "ADVISORY_ACTIVE" | "BASELINE_HOLD"
+      advisory_scenario_id      — scenario_id of advisory (or "baseline")
+      advisory_action           — "CONSIDER_VARIANT" | "KEEP_CURRENT_POLICY"
+      advisory_confidence       — float [0.0, 1.0]
+      advisory_reason           — short deterministic explanation string
+      advisory_simulation_only  — always True (explicit safety marker)
+    """
+    best_id   = evaluation_summary.get("best_candidate_scenario_id")
+    best_rec  = evaluation_summary.get("best_candidate_recommendation")
+    best_risk = evaluation_summary.get("best_candidate_risk_class", "")
+    n_comps   = evaluation_summary.get("comparison_count", 0)
+
+    # Advisory-active path: best_candidate exists and has an eligible recommendation
+    if best_id is not None and best_rec in _ADVISORY_ELIGIBLE_RECS:
+        confidence = _ADVISORY_CONFIDENCE.get(best_rec, 0.40)
+
+        # Enrich with changed_parameters count from the comparison entry
+        adv_comp  = next((c for c in comparisons if c.get("scenario_id") == best_id), None)
+        n_changed = adv_comp.get("changed_parameters_count", 0) if adv_comp else 0
+
+        return {
+            "advisory_status":          "ADVISORY_ACTIVE",
+            "advisory_scenario_id":     best_id,
+            "advisory_action":          "CONSIDER_VARIANT",
+            "advisory_confidence":      confidence,
+            "advisory_reason":          (
+                f"{best_rec}|risk={best_risk}"
+                f"|changed_params={n_changed}"
+                f"|basis={n_comps}_scenarios"
+            ),
+            "advisory_simulation_only": True,
+        }
+
+    # Baseline-hold path: explain why no advisory was generated
+    parts: list = []
+    if n_comps == 0:
+        parts.append("NO_CANDIDATES_SIMULATED")
+    elif best_id is None:
+        rej   = evaluation_summary.get("rejected_count", 0)
+        insuf = evaluation_summary.get("insufficient_data_count", 0)
+        nc    = evaluation_summary.get("no_change_count", 0)
+        if rej + insuf == n_comps:
+            parts.append(f"ALL_{n_comps}_REJECTED_OR_INSUFFICIENT")
+        elif nc == n_comps:
+            parts.append(f"ALL_{n_comps}_NO_CHANGE")
+        else:
+            parts.append("NO_SUITABLE_CANDIDATE")
+    else:
+        parts.append(f"NO_ELIGIBLE_RECOMMENDATION_rec={best_rec}")
+    parts.append(f"basis={n_comps}_scenarios")
+
+    return {
+        "advisory_status":          "BASELINE_HOLD",
+        "advisory_scenario_id":     "baseline",
+        "advisory_action":          "KEEP_CURRENT_POLICY",
+        "advisory_confidence":      1.00,
+        "advisory_reason":          "|".join(parts),
+        "advisory_simulation_only": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main simulation builder (importable for tests)
 # ---------------------------------------------------------------------------
 
@@ -742,12 +838,16 @@ def build_simulation(
     # AC-73: enrich comparisons with risk_rank/evaluation_reason; build evaluation summary
     enriched_comparisons, evaluation_summary = evaluate_scenario_comparisons(comparisons)
 
+    # AC-74: allocation advisory derived from evaluation summary
+    advisory = build_allocation_advisory(evaluation_summary, enriched_comparisons)
+
     return {
         "summary":                     summary,
         "baseline_policy":             flat_base,
         "baseline_metrics":            base_metrics,
         "policy_comparisons":          enriched_comparisons,
         "scenario_evaluation_summary": evaluation_summary,
+        "allocation_advisory":         advisory,
     }
 
 
@@ -833,6 +933,7 @@ def main() -> None:
         },
         "summary":                     simulation["summary"],
         "scenario_evaluation_summary": simulation["scenario_evaluation_summary"],
+        "allocation_advisory":         simulation["allocation_advisory"],
         "baseline_policy":             simulation["baseline_policy"],
         "baseline_metrics":            simulation["baseline_metrics"],
         "candidate_policies":          simulation["policy_comparisons"],
@@ -846,8 +947,13 @@ def main() -> None:
         print(f"[WARN] Could not write output: {e}")
 
     print(json.dumps({k: v for k, v in out.items() if k != "candidate_policies"}, indent=2))
-    ev = simulation["scenario_evaluation_summary"]
-    print(f"\n  best_candidate: {ev.get('best_candidate_scenario_id')} "
+    ev  = simulation["scenario_evaluation_summary"]
+    adv = simulation["allocation_advisory"]
+    print(f"\n  allocation_advisory: status={adv['advisory_status']}"
+          f" scenario={adv['advisory_scenario_id']}"
+          f" confidence={adv['advisory_confidence']:.2f}")
+    print(f"  advisory_reason: {adv['advisory_reason']}")
+    print(f"  best_candidate: {ev.get('best_candidate_scenario_id')} "
           f"({ev.get('best_candidate_recommendation')})")
     print(f"  rejected: {ev.get('rejected_scenarios')}")
     print(f"\n  policy_comparisons ({len(simulation['policy_comparisons'])} candidates, ranked):")
