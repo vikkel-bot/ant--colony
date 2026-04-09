@@ -348,8 +348,8 @@ def test_g_invariants():
             f"got {qs}",
         )
 
-    # G7. VERSION bumped to v2
-    check("G: VERSION is decision_quality_v2", dq.VERSION == "decision_quality_v2", f"got {dq.VERSION}")
+    # G7. VERSION bumped (v2 → v3 with AC64 memory integration)
+    check("G: VERSION is decision_quality_v3", dq.VERSION == "decision_quality_v3", f"got {dq.VERSION}")
 
     # G8. load_feedback_index handles malformed JSON → empty dict
     with tempfile.TemporaryDirectory() as tmp:

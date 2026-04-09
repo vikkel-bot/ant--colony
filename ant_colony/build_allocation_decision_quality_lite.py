@@ -1,15 +1,17 @@
 """
-AC56+AC62: Decision Quality Gate for Allocation and Rebalance
+AC56+AC62+AC64: Decision Quality Gate for Allocation and Rebalance
 Pure observability + scoring layer. No execution, no orders, no state changes.
 
 Sits after rebalance budget audit (AC55), before any future execution transition.
 AC62 wires AC-61 conviction modifier into conviction scoring (conservative).
+AC64 adds gated persistent memory influence from AC-63 on top of AC-62.
 
 Reads:
   allocation_portfolio_drift.json         — drift, severity, cause, actual/target per position
   rebalance_intents.json                  — rebalance action, delta, budget selection per intent
   execution_summary.json                  — feedback_confidence, regime_type per strategy (AC46+AC48)
   allocation_feedback_integration.json    — conviction modifier per strategy_key (AC61, optional)
+  allocation_feedback_memory.json         — persistent rolling-window memory per strategy_key (AC63)
 
 Writes:
   allocation_decision_quality.json
@@ -23,9 +25,17 @@ Score components:
   churn_penalty            (weight 0.20) — penalty for high-turnover changes
 
 AC62 conviction modifier (fail-closed):
-  effective_feedback_confidence = base_feedback_confidence × modifier
-  modifier from AC61 per strategy_key (default 1.00 if missing/fallback)
+  effective_feedback_confidence = base_feedback_confidence × cycle_modifier
+  cycle_modifier from AC61 per strategy_key (default 1.00 if missing/fallback)
   modifier band: [0.90, 1.05] — cannot dominate base conviction
+
+AC64 memory gate (conservative, gated, asymmetric):
+  Adds small correction to cycle_modifier based on persistent memory state.
+  Negative/caution memory: MEMORY_CONF_GATE_NEG=0.50, influence up to 50% of signal
+  Positive memory: MEMORY_CONF_GATE_POS=0.75, influence up to 30% of signal, stricter gates
+  Memory correction capped at MEMORY_MAX_CORR_NEG=±0.05 / MEMORY_MAX_CORR_POS=+0.03
+  Final modifier always clamped to [0.90, 1.05]
+  Fail-closed: missing/low-confidence memory → exact cycle_modifier used
 
 Gate (fail-closed):
   PASS  score >= 0.55 AND budget selected AND drift material
@@ -45,6 +55,7 @@ DRIFT_PATH        = OUT_DIR / "allocation_portfolio_drift.json"
 REBALANCE_PATH    = OUT_DIR / "rebalance_intents.json"
 EXEC_SUMMARY_PATH = OUT_DIR / "execution_summary.json"
 FEEDBACK_PATH     = OUT_DIR / "allocation_feedback_integration.json"   # AC61
+MEMORY_PATH       = OUT_DIR / "allocation_feedback_memory.json"        # AC63
 
 OUT_PATH     = OUT_DIR / "allocation_decision_quality.json"
 OUT_TSV_PATH = OUT_DIR / "allocation_decision_quality.tsv"
@@ -52,20 +63,42 @@ OUT_TSV_PATH = OUT_DIR / "allocation_decision_quality.tsv"
 TSV_HEADERS = [
     "market", "strategy", "position_key",
     "drift_pct", "drift_severity", "rebalance_action",
-    "base_feedback_confidence", "allocation_conviction_modifier",
-    "effective_feedback_confidence", "feedback_modifier_applied",
+    "base_feedback_confidence",
+    "allocation_conviction_modifier",    # cycle modifier (AC-61/62)
+    "memory_modifier",                   # memory modifier (AC-63/64)
+    "effective_modifier_final",          # final blended modifier (AC-64)
+    "effective_feedback_confidence",     # base × effective_modifier_final
+    "feedback_modifier_applied",
+    "memory_modifier_applied",
+    "memory_influence_gate",
+    "memory_influence_reason",
+    "memory_confidence",
+    "memory_bias_class",
     "drift_materiality_score", "conviction_score", "churn_penalty",
     "decision_quality_score", "decision_quality_gate",
     "decision_quality_reasons",
 ]
 
-VERSION = "decision_quality_v2"  # bumped for AC62 conviction modifier wiring
+VERSION = "decision_quality_v3"  # bumped for AC64 memory-aware conviction integration
 
 # AC62: hard bounds on modifier effect — prevents any single feedback record
 # from dominating the conviction score
-MODIFIER_MIN = 0.90
-MODIFIER_MAX = 1.05
+MODIFIER_MIN     = 0.90
+MODIFIER_MAX     = 1.05
 MODIFIER_NEUTRAL = 1.00
+# AC62/64: named modifier values (mirrors AC-61 for consistency)
+MODIFIER_POSITIVE = 1.05
+MODIFIER_NEGATIVE = 0.95
+MODIFIER_CAUTION  = 0.90
+
+# AC64: memory gate thresholds and influence weights
+# Negative gate is more permissive (memory as a brake); positive gate is strict
+MEMORY_CONF_GATE_NEG  = 0.50   # min memory_confidence to apply negative correction
+MEMORY_CONF_GATE_POS  = 0.75   # min memory_confidence to apply positive correction
+MEMORY_NEG_INFLUENCE  = 0.50   # memory gets 50% weight on negative corrections
+MEMORY_POS_INFLUENCE  = 0.30   # memory gets 30% weight on positive corrections
+MEMORY_MAX_CORR_NEG   = 0.05   # hard cap on abs(negative correction from memory)
+MEMORY_MAX_CORR_POS   = 0.03   # hard cap on positive correction from memory (tighter)
 
 # Score weights (must sum to ≤ 1.0 for positive terms)
 W_DRIFT      = 0.40
@@ -100,6 +133,164 @@ _REGIME_COMPAT = {
     "BEAR":     0.3,
     "UNKNOWN":  0.5,
 }
+
+
+# ---------------------------------------------------------------------------
+# AC64: Memory gate helpers (importable for tests)
+# ---------------------------------------------------------------------------
+
+def load_memory_index(path: Path) -> dict:
+    """
+    Load AC-63 allocation_feedback_memory.json and return an index
+    keyed by strategy_key (= position_key format). Fail-closed → {}.
+    """
+    data = load_json(path, {})
+    if not data or not isinstance(data, dict):
+        return {}
+    return data.get("strategy_keys") or {}
+
+
+def _memory_modifier_from_rec(memory_rec: dict) -> tuple:
+    """
+    (AC64 internal) Compute memory modifier from AC-63 memory record.
+    Returns (modifier: float, bias_class: str).
+
+    Uses MEMORY_CONF_GATE_NEG as minimum confidence — stricter than AC-63 observability.
+    Mirrors AC-61/63 bias thresholds for consistency.
+    Fail-closed: None or low-confidence record → (MODIFIER_NEUTRAL, "NO_MEMORY").
+    """
+    if memory_rec is None:
+        return MODIFIER_NEUTRAL, "NO_MEMORY"
+
+    mem_conf = to_float(memory_rec.get("memory_confidence", 0.0))
+    if mem_conf < MEMORY_CONF_GATE_NEG:
+        return MODIFIER_NEUTRAL, "INSUFFICIENT_EVIDENCE"
+
+    window = memory_rec.get("rolling_window") or []
+    n = len(window)
+    if n == 0:
+        return MODIFIER_NEUTRAL, "NO_MEMORY"
+
+    labels        = [e.get("outcome_label", "") for e in window]
+    helpful       = labels.count("HELPFUL")
+    harmful       = labels.count("HARMFUL")
+    harmful_ratio = harmful / n
+    net_signal    = (helpful - harmful) / n
+    eff_signal    = round(net_signal * mem_conf, 4)
+
+    # Same priority rules as AC-61
+    if eff_signal <= -0.50 or harmful_ratio >= 0.60:
+        return MODIFIER_CAUTION, "NEGATIVE_CAUTION"
+    if eff_signal <= -0.20:
+        return MODIFIER_NEGATIVE, "NEGATIVE"
+    if eff_signal >= 0.20:
+        return MODIFIER_POSITIVE, "POSITIVE"
+    return MODIFIER_NEUTRAL, "NEUTRAL"
+
+
+def apply_memory_gate(
+    cycle_modifier: float,
+    cycle_bias_class: str,
+    memory_rec: dict,
+) -> tuple:
+    """
+    AC64: Apply gated persistent memory influence on top of cycle modifier.
+
+    Returns:
+      (final_modifier, gate_passed, gate_name, mem_modifier_applied, reason_str)
+
+    Gate hierarchy — fail-closed throughout:
+      1. Memory existence gate    — else NEUTRAL fallback
+      2. Memory confidence gate   — MEMORY_CONF_GATE_NEG, else NEUTRAL fallback
+      3. Negative/caution path    — partial correction (MEMORY_NEG_INFLUENCE, ≤ MEMORY_MAX_CORR_NEG)
+      4. Positive path:
+           a. Conflict gate       — cycle must not be negative/caution
+           b. Positive conf gate  — MEMORY_CONF_GATE_POS (stricter)
+           c. Recent harmful gate — last 3 window entries must not be ≥ 2 harmful
+           d. Partial correction  — (MEMORY_POS_INFLUENCE, ≤ MEMORY_MAX_CORR_POS)
+      5. Neutral memory           — no effect, return cycle_modifier unchanged
+      6. Final modifier always clamped to [MODIFIER_MIN, MODIFIER_MAX]
+
+    Asymmetry:
+      Negative/caution: confidence ≥ 0.50, influence ≤ ±5%
+      Positive:         confidence ≥ 0.75, influence ≤ +3%, stricter gates
+    """
+    # Gate 1: existence
+    if memory_rec is None:
+        return cycle_modifier, False, "MEMORY_ABSENT", False, "NO_MEMORY_RECORD"
+
+    # Gate 2: base confidence
+    mem_conf = to_float(memory_rec.get("memory_confidence", 0.0))
+    if mem_conf < MEMORY_CONF_GATE_NEG:
+        return (
+            cycle_modifier, False,
+            "MEMORY_CONF_TOO_LOW", False,
+            f"CONF_{mem_conf:.4f}_LT_{MEMORY_CONF_GATE_NEG}",
+        )
+
+    mem_modifier, mem_bias = _memory_modifier_from_rec(memory_rec)
+    cooldown = bool(memory_rec.get("cooldown_flag", False))
+
+    is_negative = (mem_modifier < MODIFIER_NEUTRAL) or cooldown
+    is_positive = (mem_modifier > MODIFIER_NEUTRAL) and (not cooldown)
+
+    if is_negative:
+        # Negative/caution path — more permissive gate
+        raw_corr = (mem_modifier - MODIFIER_NEUTRAL) * MEMORY_NEG_INFLUENCE
+        # Clamp to max negative correction (raw_corr is negative here)
+        correction = round(max(-MEMORY_MAX_CORR_NEG, min(0.0, raw_corr)), 4)
+        final = round(max(MODIFIER_MIN, min(MODIFIER_MAX, cycle_modifier + correction)), 4)
+        gate_name = "COOLDOWN_GATE_OPEN" if cooldown else "NEGATIVE_GATE_OPEN"
+        reason = (
+            f"MEM_{mem_bias}_CORR_{correction:.4f}"
+            f"_CYCLE_{cycle_modifier}_FINAL_{final}"
+        )
+        return final, True, gate_name, True, reason
+
+    if is_positive:
+        # Gate 4a: conflict — cycle must not be negative/caution
+        if cycle_bias_class in ("NEGATIVE", "NEGATIVE_CAUTION"):
+            return (
+                cycle_modifier, False,
+                "CONFLICT_BLOCKED", False,
+                f"CYCLE_{cycle_bias_class}_MEM_POSITIVE_CONFLICT",
+            )
+
+        # Gate 4b: higher confidence for positive
+        if mem_conf < MEMORY_CONF_GATE_POS:
+            return (
+                cycle_modifier, False,
+                "POSITIVE_CONF_TOO_LOW", False,
+                f"POS_CONF_{mem_conf:.4f}_LT_{MEMORY_CONF_GATE_POS}",
+            )
+
+        # Gate 4c: no recent harmful streak (last 3 window entries)
+        window = memory_rec.get("rolling_window") or []
+        recent = window[-3:] if len(window) >= 3 else window
+        recent_harmful = sum(1 for e in recent if e.get("outcome_label") == "HARMFUL")
+        if recent_harmful >= 2:
+            return (
+                cycle_modifier, False,
+                "RECENT_HARMFUL_BLOCKED", False,
+                f"RECENT_HARMFUL_{recent_harmful}_OF_{len(recent)}",
+            )
+
+        # Positive: small correction, tighter cap
+        raw_corr = (mem_modifier - MODIFIER_NEUTRAL) * MEMORY_POS_INFLUENCE
+        correction = round(min(MEMORY_MAX_CORR_POS, max(0.0, raw_corr)), 4)
+        final = round(max(MODIFIER_MIN, min(MODIFIER_MAX, cycle_modifier + correction)), 4)
+        reason = (
+            f"MEM_{mem_bias}_CORR_{correction:.4f}"
+            f"_CYCLE_{cycle_modifier}_FINAL_{final}"
+        )
+        return final, True, "POSITIVE_GATE_OPEN", True, reason
+
+    # Neutral memory — no correction
+    return (
+        cycle_modifier, False,
+        "MEMORY_NEUTRAL", False,
+        f"MEM_{mem_bias}_NO_CORRECTION",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +558,9 @@ def main():
     # AC62: load AC61 feedback integration (fail-closed: empty dict if missing)
     feedback_index = load_feedback_index(FEEDBACK_PATH)
 
+    # AC64: load AC63 persistent memory (fail-closed: empty dict if missing)
+    memory_index = load_memory_index(MEMORY_PATH)
+
     cycle_id  = drift_data.get("cycle_id") or rebal_data.get("cycle_id")
     equity    = to_float(drift_data.get("equity", 0.0))
 
@@ -395,12 +589,20 @@ def main():
     records    = []
     gate_counts = {"PASS": 0, "HOLD": 0, "BLOCK": 0}
 
-    # AC62: counters for modifier summary
+    # AC62: counters for cycle modifier summary
     mod_applied_count    = 0
     mod_neutral_fallback = 0
     mod_positive_count   = 0
     mod_negative_count   = 0
     mod_caution_count    = 0
+
+    # AC64: counters for memory gate summary
+    mem_records_considered  = 0
+    mem_applied_count       = 0
+    mem_positive_applied    = 0
+    mem_negative_applied    = 0
+    mem_neutral_fallback    = 0
+    mem_conflict_count      = 0
 
     for pk, intent in sorted(rebal_index.items()):
         drift_row = drift_index.get(pk) or {}
@@ -425,27 +627,58 @@ def main():
                                   drift_row.get("regime_type") or "UNKNOWN")
 
         # AC62: apply conviction modifier from AC61 feedback integration
-        (effective_conf, modifier, bias_class,
-         fb_status, cooldown_flag,
+        (cycle_eff_conf, cycle_modifier, cycle_bias_class,
+         fb_status, cooldown_cycle,
          modifier_applied, modifier_reason) = apply_conviction_modifier(
             base_feedback_conf, pk, feedback_index
         )
 
-        # Track modifier summary counts
+        # Track AC62 modifier summary counts
         if modifier_applied:
             mod_applied_count += 1
-            if "POSITIVE" in bias_class:
+            if "POSITIVE" in cycle_bias_class:
                 mod_positive_count += 1
-            elif "CAUTION" in bias_class:
+            elif "CAUTION" in cycle_bias_class:
                 mod_caution_count += 1
-            elif "NEGATIVE" in bias_class:
+            elif "NEGATIVE" in cycle_bias_class:
                 mod_negative_count += 1
         else:
             mod_neutral_fallback += 1
 
-        # --- Score components (conviction uses effective_conf, not raw) ---
+        # AC64: apply gated memory influence on top of cycle modifier
+        mem_rec = memory_index.get(pk)
+        if mem_rec is not None:
+            mem_records_considered += 1
+
+        (final_modifier, mem_gate_passed, mem_gate_name,
+         mem_mod_applied, mem_reason) = apply_memory_gate(
+            cycle_modifier, cycle_bias_class, mem_rec
+        )
+
+        # Compute memory modifier and bias for audit (standalone, from window)
+        mem_modifier_val, mem_bias_class = _memory_modifier_from_rec(mem_rec)
+        mem_conf_val = to_float((mem_rec or {}).get("memory_confidence", 0.0))
+
+        # Final effective confidence uses memory-gated modifier
+        final_effective_conf = round(
+            max(0.0, min(1.0, base_feedback_conf * final_modifier)), 4
+        )
+
+        # Track AC64 memory gate summary counts
+        if mem_gate_passed:
+            mem_applied_count += 1
+            if final_modifier > cycle_modifier:
+                mem_positive_applied += 1
+            else:
+                mem_negative_applied += 1
+        else:
+            if mem_gate_name == "CONFLICT_BLOCKED":
+                mem_conflict_count += 1
+            mem_neutral_fallback += 1
+
+        # --- Score components (conviction uses final_effective_conf) ---
         drift_mat_score, drift_mat_reason   = score_drift_materiality(drift_pct)
-        conviction_score, conviction_reason = score_conviction(effective_conf, regime_type)
+        conviction_score, conviction_reason = score_conviction(final_effective_conf, regime_type)
         regime_score, regime_reason         = score_regime_compat(regime_type)
         churn_pen, churn_reason             = score_churn(delta_eur, actual_eur, target_eur)
         budget_ok_score = 1.0 if rebal_selected else 0.0
@@ -460,6 +693,8 @@ def main():
         ]
         if modifier_applied:
             component_reasons.append(modifier_reason)
+        if mem_gate_passed:
+            component_reasons.append(f"MEM_GATE_{mem_gate_name}")
         gate, gate_reasons = determine_gate(
             quality_score, rebal_selected, drift_pct,
             drift_mat_score, component_reasons,
@@ -485,17 +720,25 @@ def main():
             "actual_notional_eur":  actual_eur,
             "target_notional_eur":  target_eur,
             "rebalance_delta_eur":  delta_eur,
-            # AC62: conviction modifier audit trail
+            # AC62: cycle modifier audit trail
             "base_feedback_confidence":       base_feedback_conf,
-            "allocation_conviction_modifier": modifier,
-            "effective_feedback_confidence":  effective_conf,
-            "allocation_bias_class":          bias_class,
+            "allocation_conviction_modifier": cycle_modifier,   # cycle modifier (AC-61/62)
+            "allocation_bias_class":          cycle_bias_class,
             "feedback_status":                fb_status,
-            "cooldown_flag":                  cooldown_flag,
+            "cooldown_flag":                  cooldown_cycle,
             "feedback_modifier_applied":      modifier_applied,
             "feedback_modifier_reason":       modifier_reason,
+            # AC64: memory gate audit trail
+            "memory_modifier":            mem_modifier_val,
+            "memory_bias_class":          mem_bias_class,
+            "memory_confidence":          mem_conf_val,
+            "memory_modifier_applied":    mem_gate_passed,
+            "memory_influence_gate":      mem_gate_name,
+            "memory_influence_reason":    mem_reason,
+            "effective_modifier_final":   final_modifier,
+            "effective_feedback_confidence": final_effective_conf,
             # legacy field alias for compatibility
-            "feedback_confidence":            effective_conf,
+            "feedback_confidence":        final_effective_conf,
             # Score components
             "drift_materiality_score":  drift_mat_score,
             "conviction_score":         conviction_score,
@@ -534,7 +777,7 @@ def main():
             "pass_min": GATE_PASS_MIN,
             "hold_min": GATE_HOLD_MIN,
         },
-        # AC62: modifier summary
+        # AC62: cycle modifier summary
         "feedback_modifier_records_total":        len(records),
         "feedback_modifier_applied_count":        mod_applied_count,
         "feedback_modifier_neutral_fallback_count": mod_neutral_fallback,
@@ -542,6 +785,14 @@ def main():
         "feedback_modifier_negative_count":       mod_negative_count,
         "feedback_modifier_caution_count":        mod_caution_count,
         "source_feedback_keys":                   len(feedback_index),
+        # AC64: memory gate summary
+        "memory_records_considered":              mem_records_considered,
+        "memory_modifier_applied_count":          mem_applied_count,
+        "memory_modifier_positive_applied_count": mem_positive_applied,
+        "memory_modifier_negative_applied_count": mem_negative_applied,
+        "memory_modifier_neutral_fallback_count": mem_neutral_fallback,
+        "memory_conflict_count":                  mem_conflict_count,
+        "source_memory_keys":                     len(memory_index),
         "source_drift_rows":   len(drift_index),
         "source_rebal_intents": len(rebal_index),
         "source_exec_strategies": len(exec_index),
