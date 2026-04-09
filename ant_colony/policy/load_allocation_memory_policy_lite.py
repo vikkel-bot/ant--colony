@@ -50,6 +50,7 @@ Returns:
     (policy_dict, fallback_used: bool, load_reason: str)
 """
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -64,6 +65,7 @@ DEFAULT_POLICY: dict = {
     "policy_name":    "baseline_default",
     "policy_version": "v1",
     "description":    "Default memory policy — mirrors AC-63/64/65/66 hardcoded constants exactly",
+    "effective_from": None,
     "paper_only":     True,
     "groups": {
         "memory_gate": {
@@ -365,6 +367,7 @@ def load_policy(path: Path = POLICY_PATH) -> tuple:
     merged["policy_name"]    = data.get("policy_name",    merged["policy_name"])
     merged["policy_version"] = data.get("policy_version", merged["policy_version"])
     merged["description"]    = data.get("description",    merged["description"])
+    merged["effective_from"] = data.get("effective_from", merged.get("effective_from"))
 
     for group, defaults in merged["groups"].items():
         loaded_group = data.get("groups", {}).get(group, {})
@@ -466,6 +469,64 @@ def check_policy_drift(path: Path = POLICY_PATH) -> dict:
 # ---------------------------------------------------------------------------
 # Convenience helpers
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# AC-71 observability helpers
+# ---------------------------------------------------------------------------
+
+def policy_fingerprint(policy: dict) -> str:
+    """
+    Stable 16-char SHA-256 fingerprint of the policy *groups* values.
+
+    Only the `groups` dict is hashed — top-level metadata (policy_name,
+    policy_version, effective_from) does not affect the fingerprint.
+    This means bumping the version string without changing values produces
+    the same fingerprint; changing any actual value produces a new one.
+
+    Returns "FINGERPRINT_ERROR" on any exception (safe fallback).
+    """
+    try:
+        canonical = json.dumps(
+            policy.get("groups", {}),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    except Exception:
+        return "FINGERPRINT_ERROR"
+
+
+def get_policy_audit(
+    policy: dict,
+    fallback_used: bool,
+    load_reason: str,
+    groups_consumed: list = None,
+) -> dict:
+    """
+    Build a standardized policy audit dict for inclusion in runtime outputs.
+
+    Intended usage: call inside each module's _load_acXX_policy() helper,
+    then include the returned dict as "policy_audit" in the module's output JSON.
+
+    Fields:
+      policy_name      — from policy file (or "baseline_default" if in-code default)
+      policy_version   — from policy file metadata
+      effective_from   — from policy file metadata (None when using in-code defaults)
+      load_reason      — canonical loader load_reason string (AC-70)
+      fallback_used    — True only when entire policy is the in-code fallback
+      fingerprint      — 16-char SHA-256 of groups values (AC-71)
+      groups_consumed  — which policy groups this module reads (sorted list)
+    """
+    return {
+        "policy_name":     policy.get("policy_name",    "UNKNOWN"),
+        "policy_version":  policy.get("policy_version", "UNKNOWN"),
+        "effective_from":  policy.get("effective_from", None),
+        "load_reason":     load_reason,
+        "fallback_used":   fallback_used,
+        "fingerprint":     policy_fingerprint(policy),
+        "groups_consumed": sorted(groups_consumed or []),
+    }
+
 
 def get_flat_policy(path: Path = POLICY_PATH) -> dict:
     """

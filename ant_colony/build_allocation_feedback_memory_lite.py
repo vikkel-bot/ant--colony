@@ -65,11 +65,18 @@ def _load_ac63_policy():
         _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _policy, _fb, _reason = _mod.load_policy()
-        return _policy["groups"].get("memory_rolling_window", {}), _fb, _reason
+        _audit = _mod.get_policy_audit(_policy, _fb, _reason, ["memory_rolling_window"])
+        return _policy["groups"].get("memory_rolling_window", {}), _fb, _reason, _audit
     except Exception as _exc:
-        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
+        _reason = f"LOADER_UNAVAILABLE:{_exc}"
+        _audit = {
+            "policy_name": "UNKNOWN", "policy_version": "UNKNOWN", "effective_from": None,
+            "load_reason": _reason, "fallback_used": True,
+            "fingerprint": "UNAVAILABLE", "groups_consumed": ["memory_rolling_window"],
+        }
+        return {}, True, _reason, _audit
 
-_ac63_window, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac63_policy()
+_ac63_window, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON, _POLICY_AUDIT = _load_ac63_policy()
 
 # Rolling window discipline — sourced from policy (fail-closed to inline defaults)
 WINDOW_SIZE             = _ac63_window.get("window_size",             10)
@@ -413,6 +420,7 @@ def main():
             "memory_min_confidence":   MEMORY_MIN_CONFIDENCE,
             "cooldown_persist_cycles": COOLDOWN_PERSIST_CYCLES,
         },
+        "policy_audit":  _POLICY_AUDIT,
         "summary":       summary,
         "strategy_keys": updated,
     }

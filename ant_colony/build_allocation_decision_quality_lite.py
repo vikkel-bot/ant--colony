@@ -94,11 +94,18 @@ def _load_ac64_policy():
         _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _policy, _fb, _reason = _mod.load_policy()
-        return _policy["groups"].get("memory_gate", {}), _fb, _reason
+        _audit = _mod.get_policy_audit(_policy, _fb, _reason, ["memory_gate"])
+        return _policy["groups"].get("memory_gate", {}), _fb, _reason, _audit
     except Exception as _exc:
-        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
+        _reason = f"LOADER_UNAVAILABLE:{_exc}"
+        _audit = {
+            "policy_name": "UNKNOWN", "policy_version": "UNKNOWN", "effective_from": None,
+            "load_reason": _reason, "fallback_used": True,
+            "fingerprint": "UNAVAILABLE", "groups_consumed": ["memory_gate"],
+        }
+        return {}, True, _reason, _audit
 
-_ac64_gate, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac64_policy()
+_ac64_gate, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON, _POLICY_AUDIT = _load_ac64_policy()
 
 # AC62: hard bounds on modifier effect — sourced from policy (fail-closed to inline defaults)
 MODIFIER_MIN     = _ac64_gate.get("modifier_band_min", 0.90)
@@ -827,6 +834,7 @@ def main():
         "source_drift_rows":   len(drift_index),
         "source_rebal_intents": len(rebal_index),
         "source_exec_strategies": len(exec_index),
+        "policy_audit": _POLICY_AUDIT,
         "records": records,
     }
 

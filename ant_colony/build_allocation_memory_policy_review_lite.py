@@ -71,11 +71,18 @@ def _load_ac66_policy():
         _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _policy, _fb, _reason = _mod.load_policy()
-        return _policy["groups"].get("review_thresholds", {}), _fb, _reason
+        _audit = _mod.get_policy_audit(_policy, _fb, _reason, ["review_thresholds"])
+        return _policy["groups"].get("review_thresholds", {}), _fb, _reason, _audit
     except Exception as _exc:
-        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
+        _reason = f"LOADER_UNAVAILABLE:{_exc}"
+        _audit = {
+            "policy_name": "UNKNOWN", "policy_version": "UNKNOWN", "effective_from": None,
+            "load_reason": _reason, "fallback_used": True,
+            "fingerprint": "UNAVAILABLE", "groups_consumed": ["review_thresholds"],
+        }
+        return {}, True, _reason, _audit
 
-_ac66_review, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac66_policy()
+_ac66_review, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON, _POLICY_AUDIT = _load_ac66_policy()
 
 # Review thresholds — sourced from policy (fail-closed to inline defaults)
 MIN_REVIEWABLE_RECORDS = _ac66_review.get("review_min_records",                   5)
@@ -592,6 +599,7 @@ def main():
             "low_conf_rate_review":      LOW_CONF_RATE_REVIEW,
             "avg_delta_watch":           AVG_DELTA_WATCH,
         },
+        "policy_audit":         _POLICY_AUDIT,
         "summary":              review["summary"],
         "policy_status":        review["policy_status"],
         "policy_review":        review["policy_review"],
