@@ -39,6 +39,7 @@ Writes:
 
 Usage: python ant_colony/build_allocation_feedback_memory_lite.py
 """
+import importlib.util as _ilu
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,13 +53,31 @@ MEMORY_PATH        = OUT_DIR / "allocation_feedback_memory.json"
 
 VERSION = "feedback_memory_v1"
 
-# Rolling window discipline
-WINDOW_SIZE        = 10    # keep last N READY outcomes per strategy_key
-FULL_MEMORY_AT     = 8     # memory_confidence = 1.0 at this window size
-MEMORY_MIN_CONFIDENCE = 0.40  # below this → INSUFFICIENT (no positive bias)
+# ---------------------------------------------------------------------------
+# AC-68: load rolling-window constants from canonical policy loader.
+# Fail-closed: if loader unavailable, inline defaults (same values) are used.
+# Not-policy values (MEMORY_MIN_CONFIDENCE, sparse threshold) remain hardcoded.
+# ---------------------------------------------------------------------------
+def _load_ac63_policy():
+    try:
+        _path = Path(__file__).parent / "policy" / "load_allocation_memory_policy_lite.py"
+        _spec = _ilu.spec_from_file_location("_policy_loader", _path)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _policy, _fb, _reason = _mod.load_policy()
+        return _policy["groups"].get("memory_rolling_window", {}), _fb, _reason
+    except Exception as _exc:
+        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
 
-# Cooldown persistence
-COOLDOWN_PERSIST_CYCLES = 3  # cycles cooldown persists after last caution signal
+_ac63_window, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac63_policy()
+
+# Rolling window discipline — sourced from policy (fail-closed to inline defaults)
+WINDOW_SIZE             = _ac63_window.get("window_size",             10)
+FULL_MEMORY_AT          = _ac63_window.get("full_memory_at",          8)
+COOLDOWN_PERSIST_CYCLES = _ac63_window.get("cooldown_cycles_default", 3)
+
+# Not-policy hardcoded constants (no policy key exists for these; AC-68 scope excludes them)
+MEMORY_MIN_CONFIDENCE = 0.40  # below this → INSUFFICIENT (no positive bias)
 
 # AC-60 labels
 _READY_OUTCOME_LABELS = {"HELPFUL", "NEUTRAL", "HARMFUL"}

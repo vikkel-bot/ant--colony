@@ -46,6 +46,7 @@ Writes:
 
 Usage: python ant_colony/build_allocation_memory_policy_review_lite.py
 """
+import importlib.util as _ilu
 import json
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -59,23 +60,32 @@ OUT_PATH = OUT_DIR / "allocation_memory_policy_review.json"
 VERSION = "memory_policy_review_v1"
 
 # ---------------------------------------------------------------------------
-# Review thresholds — small, explicit, conservative
+# AC-68: load review thresholds from canonical policy loader.
+# Fail-closed: if loader unavailable, inline defaults (same values) are used.
+# Not-policy values (usage watch bands 0.10/0.80) remain hardcoded below.
 # ---------------------------------------------------------------------------
+def _load_ac66_policy():
+    try:
+        _path = Path(__file__).parent / "policy" / "load_allocation_memory_policy_lite.py"
+        _spec = _ilu.spec_from_file_location("_policy_loader", _path)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _policy, _fb, _reason = _mod.load_policy()
+        return _policy["groups"].get("review_thresholds", {}), _fb, _reason
+    except Exception as _exc:
+        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
 
-MIN_REVIEWABLE_RECORDS = 5     # below → INSUFFICIENT_REVIEW_DATA (no other review)
+_ac66_review, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac66_policy()
 
-POSITIVE_RATE_REVIEW   = 0.30  # positive_applied_rate ≥ this → REVIEW_POSITIVE_GATE
-POSITIVE_RATE_WATCH    = 0.20  # between watch and review → WATCH
-
-NEGATIVE_RATE_REVIEW   = 0.70  # (negative+caution) rate ≥ this → REVIEW_NEGATIVE_SENSITIVITY
-
-COOLDOWN_RATE_REVIEW   = 0.50  # cooldown_seen_rate ≥ this → REVIEW_COOLDOWN_LENGTH
-
-CONFLICT_RATE_REVIEW   = 0.30  # conflict_block_rate ≥ this → REVIEW_CONFLICT_POLICY
-
-LOW_CONF_RATE_REVIEW   = 0.50  # low_conf_blocked / available ≥ this → REVIEW_MEM_CONF_THRESHOLD
-
-AVG_DELTA_WATCH        = 0.02  # avg_abs_modifier_delta ≥ this → WATCH on safety magnitude
+# Review thresholds — sourced from policy (fail-closed to inline defaults)
+MIN_REVIEWABLE_RECORDS = _ac66_review.get("review_min_records",                   5)
+POSITIVE_RATE_REVIEW   = _ac66_review.get("review_positive_applied_rate_warn",  0.30)
+POSITIVE_RATE_WATCH    = _ac66_review.get("review_positive_applied_rate_watch", 0.20)
+NEGATIVE_RATE_REVIEW   = _ac66_review.get("review_negative_applied_rate_warn",  0.70)
+COOLDOWN_RATE_REVIEW   = _ac66_review.get("review_cooldown_rate_warn",           0.50)
+CONFLICT_RATE_REVIEW   = _ac66_review.get("review_conflict_block_rate_warn",     0.30)
+LOW_CONF_RATE_REVIEW   = _ac66_review.get("review_low_conf_blocked_rate_warn",   0.50)
+AVG_DELTA_WATCH        = _ac66_review.get("review_avg_delta_watch",              0.02)
 
 # ---------------------------------------------------------------------------
 # Recommendation labels

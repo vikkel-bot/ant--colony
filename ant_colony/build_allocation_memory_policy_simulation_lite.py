@@ -35,6 +35,7 @@ Writes:
 Usage: python ant_colony/build_allocation_memory_policy_simulation_lite.py
 """
 import copy
+import importlib.util as _ilu
 import json
 from collections import Counter
 from datetime import datetime, timezone
@@ -46,53 +47,30 @@ OBS_PATH = OUT_DIR / "allocation_memory_impact_observability.json"
 OUT_PATH = OUT_DIR / "allocation_memory_policy_simulation.json"
 OUT_TSV  = OUT_DIR / "allocation_memory_policy_simulation.tsv"
 
-POLICY_DIR   = Path(__file__).parent / "policy"
-POLICY_PATH  = POLICY_DIR / "allocation_memory_policy.json"
+POLICY_DIR      = Path(__file__).parent / "policy"
+POLICY_PATH     = POLICY_DIR / "allocation_memory_policy.json"
 CANDIDATES_PATH = POLICY_DIR / "allocation_memory_candidates.json"  # optional external
 
 VERSION = "memory_policy_simulation_v1"
 
 # ---------------------------------------------------------------------------
-# Default policy — mirrors AC-63/64/65/66 hardcoded constants exactly
-# Used when policy file is absent or invalid (fail-closed fallback)
+# AC-68: canonical policy loader — single source of defaults and load logic.
+# DEFAULT_POLICY and load_policy() are imported from the canonical loader.
+# No embedded copy of DEFAULT_POLICY lives here.
 # ---------------------------------------------------------------------------
 
-DEFAULT_POLICY: dict = {
-    "policy_name":    "baseline_default",
-    "policy_version": "v1",
-    "description":    "Default memory policy — mirrors AC-63/64/65/66 hardcoded constants exactly",
-    "paper_only":     True,
-    "groups": {
-        "memory_gate": {
-            "memory_confidence_min_negative":  0.50,
-            "memory_confidence_min_positive":  0.75,
-            "negative_blend_weight":           0.50,
-            "positive_blend_weight":           0.30,
-            "negative_correction_cap":         0.05,
-            "positive_correction_cap":         0.03,
-            "modifier_band_min":               0.90,
-            "modifier_band_max":               1.05,
-            "recent_harmful_lookback":         3,
-            "recent_harmful_block_threshold":  2,
-            "conflict_policy_mode":            "BLOCK_ON_CONFLICT",
-        },
-        "memory_rolling_window": {
-            "window_size":              10,
-            "full_memory_at":           8,
-            "cooldown_cycles_default":  3,
-        },
-        "review_thresholds": {
-            "review_min_records":                   5,
-            "review_positive_applied_rate_warn":    0.30,
-            "review_positive_applied_rate_watch":   0.20,
-            "review_negative_applied_rate_warn":    0.70,
-            "review_cooldown_rate_warn":            0.50,
-            "review_conflict_block_rate_warn":      0.30,
-            "review_low_conf_blocked_rate_warn":    0.50,
-            "review_avg_delta_watch":               0.02,
-        },
-    },
-}
+def _import_canonical_loader():
+    _path = Path(__file__).parent / "policy" / "load_allocation_memory_policy_lite.py"
+    _spec = _ilu.spec_from_file_location("_policy_loader", _path)
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+_canonical_loader = _import_canonical_loader()
+
+# Re-export for test/caller compatibility: sim.DEFAULT_POLICY and sim.load_policy()
+DEFAULT_POLICY = copy.deepcopy(_canonical_loader.DEFAULT_POLICY)
+load_policy    = _canonical_loader.load_policy
 
 # ---------------------------------------------------------------------------
 # Safety limits for candidate policy validation
@@ -233,36 +211,8 @@ def write_tsv(path: Path, rows: list) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Part A — Policy abstraction: load, flatten, validate
+# Part A — Policy abstraction: flatten, validate (load_policy → canonical loader)
 # ---------------------------------------------------------------------------
-
-def load_policy(path: Path) -> tuple:
-    """
-    Load baseline policy from JSON.
-    Returns (policy_dict, fallback_used: bool, load_reason: str).
-    On any error → returns DEFAULT_POLICY with fallback_used=True.
-    """
-    data, err = load_json_file(path, None)
-    if err:
-        return copy.deepcopy(DEFAULT_POLICY), True, f"FALLBACK_DEFAULT|{err}"
-    if not isinstance(data, dict) or "groups" not in data:
-        return copy.deepcopy(DEFAULT_POLICY), True, "FALLBACK_DEFAULT|INVALID_STRUCTURE"
-
-    # Deep-merge: DEFAULT_POLICY fills any missing keys in loaded policy
-    merged = copy.deepcopy(DEFAULT_POLICY)
-    merged["policy_name"]    = data.get("policy_name",    merged["policy_name"])
-    merged["policy_version"] = data.get("policy_version", merged["policy_version"])
-    merged["description"]    = data.get("description",    merged["description"])
-    for group, defaults in merged["groups"].items():
-        loaded_group = data.get("groups", {}).get(group, {})
-        for k, v in loaded_group.items():
-            if k.startswith("_"):
-                continue  # skip comments
-            if k in defaults:
-                merged["groups"][group][k] = v
-
-    return merged, False, "LOADED_FROM_FILE"
-
 
 def flatten_policy(policy: dict) -> dict:
     """Flatten grouped policy into a single dict of param → value."""

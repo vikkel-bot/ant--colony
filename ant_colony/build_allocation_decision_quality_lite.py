@@ -44,6 +44,7 @@ Gate (fail-closed):
 
 Usage: python ant_colony/build_allocation_decision_quality_lite.py
 """
+import importlib.util as _ilu
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,24 +82,47 @@ TSV_HEADERS = [
 
 VERSION = "decision_quality_v3"  # bumped for AC64 memory-aware conviction integration
 
-# AC62: hard bounds on modifier effect — prevents any single feedback record
-# from dominating the conviction score
-MODIFIER_MIN     = 0.90
-MODIFIER_MAX     = 1.05
-MODIFIER_NEUTRAL = 1.00
+# ---------------------------------------------------------------------------
+# AC-68: load memory-gate constants from canonical policy loader.
+# Fail-closed: if loader unavailable, inline defaults (same values) are used.
+# Not-policy values (bias-class signal boundaries) remain hardcoded below.
+# ---------------------------------------------------------------------------
+def _load_ac64_policy():
+    try:
+        _path = Path(__file__).parent / "policy" / "load_allocation_memory_policy_lite.py"
+        _spec = _ilu.spec_from_file_location("_policy_loader", _path)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _policy, _fb, _reason = _mod.load_policy()
+        return _policy["groups"].get("memory_gate", {}), _fb, _reason
+    except Exception as _exc:
+        return {}, True, f"LOADER_UNAVAILABLE:{_exc}"
+
+_ac64_gate, _POLICY_FALLBACK_USED, _POLICY_LOAD_REASON = _load_ac64_policy()
+
+# AC62: hard bounds on modifier effect — sourced from policy (fail-closed to inline defaults)
+MODIFIER_MIN     = _ac64_gate.get("modifier_band_min", 0.90)
+MODIFIER_MAX     = _ac64_gate.get("modifier_band_max", 1.05)
+MODIFIER_NEUTRAL = 1.00  # mathematical identity — not configurable
 # AC62/64: named modifier values (mirrors AC-61 for consistency)
 MODIFIER_POSITIVE = 1.05
 MODIFIER_NEGATIVE = 0.95
 MODIFIER_CAUTION  = 0.90
 
-# AC64: memory gate thresholds and influence weights
-# Negative gate is more permissive (memory as a brake); positive gate is strict
-MEMORY_CONF_GATE_NEG  = 0.50   # min memory_confidence to apply negative correction
-MEMORY_CONF_GATE_POS  = 0.75   # min memory_confidence to apply positive correction
-MEMORY_NEG_INFLUENCE  = 0.50   # memory gets 50% weight on negative corrections
-MEMORY_POS_INFLUENCE  = 0.30   # memory gets 30% weight on positive corrections
-MEMORY_MAX_CORR_NEG   = 0.05   # hard cap on abs(negative correction from memory)
-MEMORY_MAX_CORR_POS   = 0.03   # hard cap on positive correction from memory (tighter)
+# AC64: memory gate thresholds and influence weights — sourced from policy
+MEMORY_CONF_GATE_NEG  = _ac64_gate.get("memory_confidence_min_negative", 0.50)
+MEMORY_CONF_GATE_POS  = _ac64_gate.get("memory_confidence_min_positive", 0.75)
+MEMORY_NEG_INFLUENCE  = _ac64_gate.get("negative_blend_weight",          0.50)
+MEMORY_POS_INFLUENCE  = _ac64_gate.get("positive_blend_weight",          0.30)
+MEMORY_MAX_CORR_NEG   = _ac64_gate.get("negative_correction_cap",        0.05)
+MEMORY_MAX_CORR_POS   = _ac64_gate.get("positive_correction_cap",        0.03)
+
+# AC64: recent-harmful gate — sourced from policy
+_RECENT_HARMFUL_LOOKBACK   = _ac64_gate.get("recent_harmful_lookback",        3)
+_RECENT_HARMFUL_THRESHOLD  = _ac64_gate.get("recent_harmful_block_threshold", 2)
+
+# AC64: conflict mode — sourced from policy
+_CONFLICT_POLICY_MODE = _ac64_gate.get("conflict_policy_mode", "BLOCK_ON_CONFLICT")
 
 # Score weights (must sum to ≤ 1.0 for positive terms)
 W_DRIFT      = 0.40
@@ -248,13 +272,14 @@ def apply_memory_gate(
         return final, True, gate_name, True, reason
 
     if is_positive:
-        # Gate 4a: conflict — cycle must not be negative/caution
-        if cycle_bias_class in ("NEGATIVE", "NEGATIVE_CAUTION"):
-            return (
-                cycle_modifier, False,
-                "CONFLICT_BLOCKED", False,
-                f"CYCLE_{cycle_bias_class}_MEM_POSITIVE_CONFLICT",
-            )
+        # Gate 4a: conflict — cycle must not be negative/caution (policy: conflict_policy_mode)
+        if _CONFLICT_POLICY_MODE == "BLOCK_ON_CONFLICT":
+            if cycle_bias_class in ("NEGATIVE", "NEGATIVE_CAUTION"):
+                return (
+                    cycle_modifier, False,
+                    "CONFLICT_BLOCKED", False,
+                    f"CYCLE_{cycle_bias_class}_MEM_POSITIVE_CONFLICT",
+                )
 
         # Gate 4b: higher confidence for positive
         if mem_conf < MEMORY_CONF_GATE_POS:
@@ -264,11 +289,11 @@ def apply_memory_gate(
                 f"POS_CONF_{mem_conf:.4f}_LT_{MEMORY_CONF_GATE_POS}",
             )
 
-        # Gate 4c: no recent harmful streak (last 3 window entries)
+        # Gate 4c: no recent harmful streak (policy: recent_harmful_lookback / block_threshold)
         window = memory_rec.get("rolling_window") or []
-        recent = window[-3:] if len(window) >= 3 else window
+        recent = window[-_RECENT_HARMFUL_LOOKBACK:] if len(window) >= _RECENT_HARMFUL_LOOKBACK else window
         recent_harmful = sum(1 for e in recent if e.get("outcome_label") == "HARMFUL")
-        if recent_harmful >= 2:
+        if recent_harmful >= _RECENT_HARMFUL_THRESHOLD:
             return (
                 cycle_modifier, False,
                 "RECENT_HARMFUL_BLOCKED", False,
