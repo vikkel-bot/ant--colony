@@ -2,7 +2,14 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+from execution_slippage_model import NoSlippage
+
 OUT_DIR = Path(r"C:\Trading\ANT_OUT")
+
+# AC-121: slippage model for paper fill prices.
+# Default = NoSlippage → backward-safe (fill at exact market price).
+# Replace with FixedBasisPointsSlippage(bps=5.0) etc. to add realism.
+_SLIPPAGE_MODEL = NoSlippage()
 
 EXECUTION_SUMMARY_PATH = OUT_DIR / "execution_summary.json"
 POSITIONS_PATH = OUT_DIR / "paper_positions.json"
@@ -147,8 +154,10 @@ def main():
             intents_skipped += 1
             continue
 
-        notional_back = round(size * price, 2)
-        realized_pnl = round(size * (price - entry_price), 2)
+        # AC-121: apply slippage to exit fill price (SELL → price moves down).
+        fill_price = _SLIPPAGE_MODEL.apply(price, "SELL")
+        notional_back = round(size * fill_price, 2)
+        realized_pnl = round(size * (fill_price - entry_price), 2)
         cash = round(cash + notional_back, 2)
 
         append_jsonl(EXECUTION_LOG_PATH, {
@@ -156,7 +165,9 @@ def main():
             "market": market,
             "action": "EXIT_LONG",
             "decision_id": decision_id,
-            "price": price,
+            "raw_price": price,
+            "fill_price": fill_price,
+            "slippage_abs": round(price - fill_price, 8),
             "size": size,
             "notional_eur": notional_back,
             "realized_pnl": realized_pnl,
@@ -252,12 +263,14 @@ def main():
             intents_skipped += 1
             continue
 
-        size = round(granted / price, 10)
+        # AC-121: apply slippage to entry fill price (BUY → price moves up).
+        fill_price = _SLIPPAGE_MODEL.apply(price, "BUY")
+        size = round(granted / fill_price, 10)
 
         positions[position_key] = {
             "position": "LONG",
             "size": size,
-            "entry_price": price,
+            "entry_price": fill_price,
             "entry_ts": ts,
             "decision_id": decision_id,
             "execution_id": decision_id.replace("_ENTER_LONG", ""),
@@ -274,7 +287,9 @@ def main():
             "strategy": c["strategy"],
             "action": "ENTER_LONG",
             "decision_id": decision_id,
-            "price": price,
+            "raw_price": price,
+            "fill_price": fill_price,
+            "slippage_abs": round(fill_price - price, 8),
             "size": size,
             "requested_notional_eur": c["requested_notional_eur"],
             "granted_notional_eur": granted,
