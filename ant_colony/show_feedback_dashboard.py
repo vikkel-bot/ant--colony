@@ -10,6 +10,9 @@ source/data health context alongside review/anomaly signals.
 AC-108: also reads C:\\Trading\\ANT_OUT\\combined_review_snapshot.json to show
 a compact daily overview in the dashboard header.
 
+AC-110: also reads C:\\Trading\\ANT_OUT\\source_freshness_recovery_plan.json to
+show the recovery plan for stale/missing sources.
+
 Usage:
     python ant_colony/show_feedback_dashboard.py
 """
@@ -20,6 +23,7 @@ from pathlib import Path
 ANALYSIS_PATH      = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
 SOURCE_HEALTH_PATH = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 SNAPSHOT_PATH      = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
+RECOVERY_PATH      = Path(r"C:\Trading\ANT_OUT\source_freshness_recovery_plan.json")
 
 # ANSI colours (auto-disabled on systems that don't support them)
 try:
@@ -79,6 +83,16 @@ def _load_snapshot(path: Path) -> tuple[dict | None, str | None]:
         return None, f"ERROR: {exc}"
 
 
+def _load_recovery_plan(path: Path) -> tuple[dict | None, str | None]:
+    """Load source_freshness_recovery_plan.json. Returns (data, None) or (None, msg)."""
+    if not path.exists():
+        return None, "NO DATA"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"ERROR: {exc}"
+
+
 def _load_source_health(path: Path) -> tuple[dict | None, str | None]:
     """
     Load source_health_review.json. Returns (data, None) on success,
@@ -104,7 +118,8 @@ def _overview_colour(status: str) -> str:
 
 def show(path: Path = ANALYSIS_PATH,
          source_health_path: Path = SOURCE_HEALTH_PATH,
-         snapshot_path: Path = SNAPSHOT_PATH) -> None:
+         snapshot_path: Path = SNAPSHOT_PATH,
+         recovery_path: Path = RECOVERY_PATH) -> None:
     """Print feedback dashboard from analysis JSON. Handles missing file."""
     # --- Load ---
     if not path.exists():
@@ -133,6 +148,9 @@ def show(path: Path = ANALYSIS_PATH,
 
     # --- Combined snapshot (AC-108) ---
     snap_data, snap_err = _load_snapshot(snapshot_path)
+
+    # --- Recovery plan (AC-110) ---
+    rp_data, rp_err = _load_recovery_plan(recovery_path)
 
     # --- Source health (AC-106) ---
     sh_data, sh_err = _load_source_health(source_health_path)
@@ -222,6 +240,27 @@ def show(path: Path = ANALYSIS_PATH,
         print(f"  fresh/stale/miss: {sh_fresh} / {sh_stale} / {sh_miss}")
         if sh_affected:
             print(f"  affected_markets: {', '.join(sh_affected)}")
+    else:
+        print("  (no data)")
+    print()
+
+    # --- Recovery Plan (AC-110) ---
+    print(_bold("── Recovery Plan ────────────────────────────────"))
+    if rp_data and isinstance(rp_data, dict):
+        rp_status = rp_data.get("recovery_status", "?")
+        rp_code   = rp_data.get("recovery_reason_code", "?")
+        rp_sm     = rp_data.get("summary", {})
+        rp_req    = rp_sm.get("markets_requiring_recovery", 0) if isinstance(rp_sm, dict) else 0
+        rp_po     = rp_data.get("priority_order") or []
+        top_mkts  = ", ".join(e["market"] for e in rp_po[:3]) if rp_po else "—"
+        rp_colour = _red if rp_status == "URGENT" else (_yellow if rp_status == "PLAN_READY"
+                    else _green)
+        print(f"  status            : {rp_colour(rp_status)}")
+        print(f"  reason_code       : {rp_code}")
+        print(f"  requiring_recovery: {rp_req}")
+        print(f"  top priorities    : {top_mkts}")
+    elif rp_err:
+        print(f"  {rp_err}")
     else:
         print("  (no data)")
     print()

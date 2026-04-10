@@ -68,7 +68,8 @@ def _analysis() -> dict:
 
 
 def _captured(path: Path, health_path: Path | None = None,
-              snapshot_path: Path | None = None) -> str:
+              snapshot_path: Path | None = None,
+              recovery_path: Path | None = None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
@@ -77,7 +78,8 @@ def _captured(path: Path, health_path: Path | None = None,
         # regardless of what exists on disk.
         hp = health_path   if health_path   is not None else Path("C:/nonexistent/health.json")
         sp = snapshot_path if snapshot_path is not None else Path("C:/nonexistent/snapshot.json")
-        show(path, source_health_path=hp, snapshot_path=sp)
+        rp = recovery_path if recovery_path is not None else Path("C:/nonexistent/recovery.json")
+        show(path, source_health_path=hp, snapshot_path=sp, recovery_path=rp)
     finally:
         sys.stdout = old
     return buf.getvalue()
@@ -451,5 +453,113 @@ class TestCombinedSnapshot:
         sp = _write_snapshot(tmp_path, _snapshot())
         before = set(f.name for f in tmp_path.iterdir())
         _captured(ap, snapshot_path=sp)
+        after  = set(f.name for f in tmp_path.iterdir())
+        assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 7. Recovery plan section (AC-110)
+# ---------------------------------------------------------------------------
+
+def _recovery(status: str = "URGENT", reason_code: str = "SOURCE_HEALTH_CRITICAL",
+              requiring: int = 6,
+              priority_order: list | None = None) -> dict:
+    po = priority_order if priority_order is not None else [
+        {"market": "ADA-EUR", "recovery_class": "REFRESH_STALE",
+         "priority": "MEDIUM", "reason_code": "DATA_STALE"},
+        {"market": "BTC-EUR", "recovery_class": "REFRESH_STALE",
+         "priority": "MEDIUM", "reason_code": "DATA_STALE"},
+    ]
+    return {
+        "version":              "source_freshness_recovery_plan_v1",
+        "component":            "build_source_freshness_recovery_plan_lite",
+        "ts_utc":               "2026-04-10T12:00:00Z",
+        "recovery_status":      status,
+        "recovery_reason_code": reason_code,
+        "summary": {"markets_total": requiring,
+                    "markets_requiring_recovery": requiring,
+                    "markets_stale": requiring, "markets_missing": 0},
+        "priority_order": po,
+        "sources": {"health_loaded": True, "adapter_loaded": True},
+        "flags": {"non_binding": True, "simulation_only": True,
+                  "paper_only": True, "live_activation_allowed": False},
+    }
+
+
+def _write_recovery(tmp_path, data: dict) -> Path:
+    p = tmp_path / "recovery.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+class TestRecoveryPlan:
+    def test_missing_recovery_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        _captured(ap, recovery_path=tmp_path / "nonexistent.json")
+
+    def test_missing_recovery_shows_no_data(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        output = _captured(ap, recovery_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_recovery_no_crash(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "rec.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        _captured(ap, recovery_path=bad)
+
+    def test_corrupt_recovery_shows_error(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "rec.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(ap, recovery_path=bad)
+        assert "ERROR" in output
+
+    def test_urgent_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery("URGENT", "SOURCE_HEALTH_CRITICAL"))
+        output = _captured(ap, recovery_path=rp)
+        assert "URGENT" in output
+
+    def test_reason_code_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery("URGENT", "SOURCE_HEALTH_CRITICAL"))
+        output = _captured(ap, recovery_path=rp)
+        assert "SOURCE_HEALTH_CRITICAL" in output
+
+    def test_requiring_recovery_count_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery(requiring=6))
+        output = _captured(ap, recovery_path=rp)
+        assert "6" in output
+
+    def test_top_priorities_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        po = [{"market": "ADA-EUR", "recovery_class": "REFRESH_STALE",
+               "priority": "MEDIUM", "reason_code": "DATA_STALE"},
+              {"market": "BTC-EUR", "recovery_class": "RESTORE_MISSING",
+               "priority": "HIGH", "reason_code": "DATA_MISSING"}]
+        rp = _write_recovery(tmp_path, _recovery(priority_order=po))
+        output = _captured(ap, recovery_path=rp)
+        assert "ADA-EUR" in output or "BTC-EUR" in output
+
+    def test_plan_ready_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery("PLAN_READY", "SOURCES_STALE"))
+        output = _captured(ap, recovery_path=rp)
+        assert "PLAN_READY" in output
+
+    def test_none_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery("NONE", "ALL_SOURCES_FRESH",
+                                                  requiring=0, priority_order=[]))
+        output = _captured(ap, recovery_path=rp)
+        assert "NONE" in output
+
+    def test_no_extra_files_written(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        rp = _write_recovery(tmp_path, _recovery())
+        before = set(f.name for f in tmp_path.iterdir())
+        _captured(ap, recovery_path=rp)
         after  = set(f.name for f in tmp_path.iterdir())
         assert before == after
