@@ -9,6 +9,7 @@ Coverage:
   - no file writes (read-only)
   - output contains expected fields
   - AC-106: source health section shown / missing / corrupt
+  - AC-108: combined review snapshot in header shown / missing / corrupt
 """
 import sys
 import json
@@ -66,15 +67,17 @@ def _analysis() -> dict:
     }
 
 
-def _captured(path: Path, health_path: Path | None = None) -> str:
+def _captured(path: Path, health_path: Path | None = None,
+              snapshot_path: Path | None = None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
-        # Pass a nonexistent health path when not supplied so tests stay
-        # deterministic regardless of what exists on disk.
-        hp = health_path if health_path is not None else Path("C:/nonexistent/health.json")
-        show(path, source_health_path=hp)
+        # Pass nonexistent paths when not supplied so tests stay deterministic
+        # regardless of what exists on disk.
+        hp = health_path   if health_path   is not None else Path("C:/nonexistent/health.json")
+        sp = snapshot_path if snapshot_path is not None else Path("C:/nonexistent/snapshot.json")
+        show(path, source_health_path=hp, snapshot_path=sp)
     finally:
         sys.stdout = old
     return buf.getvalue()
@@ -351,5 +354,102 @@ class TestSourceHealth:
         hp = _write_health(tmp_path, _health())
         before = set(f.name for f in tmp_path.iterdir())
         _captured(ap, health_path=hp)
+        after  = set(f.name for f in tmp_path.iterdir())
+        assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 6. Combined review snapshot header (AC-108)
+# ---------------------------------------------------------------------------
+
+def _snapshot(status: str = "HEALTHY", top_risk: str = "No risk identified",
+              human_ctx: str = "No attention trigger — review aligned") -> dict:
+    return {
+        "version":              "combined_review_snapshot_v1",
+        "component":            "build_combined_review_snapshot_lite",
+        "ts_utc":               "2026-04-10T12:00:00Z",
+        "overview_status":      status,
+        "overview_reason_code": "TEST_CODE",
+        "source_health":        {"status": "HEALTHY", "blocking_review": False,
+                                 "reason_code": "ALL_SOURCES_FRESH",
+                                 "markets_total": 3, "markets_fresh": 3,
+                                 "markets_stale": 0, "markets_missing": 0},
+        "review_health":        {"alignment": "HIGH", "needs_attention": False,
+                                 "attention_reason_code": "NONE",
+                                 "entries": 30, "confirm_rate": 0.7,
+                                 "disagree_rate": 0.1, "uncertain_rate": 0.2},
+        "summary":              {"top_risk": top_risk, "human_context": human_ctx},
+        "sources":              {"analysis_loaded": True, "health_loaded": True},
+        "flags": {"non_binding": True, "simulation_only": True,
+                  "paper_only": True, "live_activation_allowed": False},
+    }
+
+
+def _write_snapshot(tmp_path, data: dict) -> Path:
+    p = tmp_path / "snapshot.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+class TestCombinedSnapshot:
+    def test_missing_snapshot_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        _captured(ap, snapshot_path=tmp_path / "nonexistent.json")
+
+    def test_missing_snapshot_shows_no_data(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        output = _captured(ap, snapshot_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_snapshot_no_crash(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "snap.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        _captured(ap, snapshot_path=bad)
+
+    def test_corrupt_snapshot_shows_error(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "snap.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(ap, snapshot_path=bad)
+        assert "ERROR" in output
+
+    def test_overview_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot("CRITICAL"))
+        output = _captured(ap, snapshot_path=sp)
+        assert "CRITICAL" in output
+
+    def test_top_risk_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot(
+            "CRITICAL", top_risk="Source freshness: all market data stale"))
+        output = _captured(ap, snapshot_path=sp)
+        assert "Source freshness" in output or "stale" in output.lower()
+
+    def test_human_context_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot(
+            "ATTENTION", human_ctx="Disagreement on critical cases — review required"))
+        output = _captured(ap, snapshot_path=sp)
+        assert "Disagreement" in output or "review required" in output
+
+    def test_healthy_status_shown_in_overview(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot("HEALTHY"))
+        output = _captured(ap, snapshot_path=sp)
+        assert "HEALTHY" in output
+
+    def test_overview_section_header_present(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot())
+        output = _captured(ap, snapshot_path=sp)
+        assert "Overview" in output or "overview" in output.lower()
+
+    def test_no_extra_files_written(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot())
+        before = set(f.name for f in tmp_path.iterdir())
+        _captured(ap, snapshot_path=sp)
         after  = set(f.name for f in tmp_path.iterdir())
         assert before == after

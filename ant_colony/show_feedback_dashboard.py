@@ -7,6 +7,9 @@ human-readable overview. No file writes. No dependencies beyond stdlib.
 AC-106: also reads C:\\Trading\\ANT_OUT\\source_health_review.json to show
 source/data health context alongside review/anomaly signals.
 
+AC-108: also reads C:\\Trading\\ANT_OUT\\combined_review_snapshot.json to show
+a compact daily overview in the dashboard header.
+
 Usage:
     python ant_colony/show_feedback_dashboard.py
 """
@@ -14,8 +17,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ANALYSIS_PATH     = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
+ANALYSIS_PATH      = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
 SOURCE_HEALTH_PATH = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
+SNAPSHOT_PATH      = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
 
 # ANSI colours (auto-disabled on systems that don't support them)
 try:
@@ -65,6 +69,16 @@ def _pct(rate: float) -> str:
     return f"{rate * 100:.1f}%"
 
 
+def _load_snapshot(path: Path) -> tuple[dict | None, str | None]:
+    """Load combined_review_snapshot.json. Returns (data, None) or (None, msg)."""
+    if not path.exists():
+        return None, "NO DATA"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"ERROR: {exc}"
+
+
 def _load_source_health(path: Path) -> tuple[dict | None, str | None]:
     """
     Load source_health_review.json. Returns (data, None) on success,
@@ -78,8 +92,19 @@ def _load_source_health(path: Path) -> tuple[dict | None, str | None]:
         return None, f"ERROR: {exc}"
 
 
+def _overview_colour(status: str) -> str:
+    if status == "HEALTHY":
+        return _green(status)
+    if status == "WATCH":
+        return _cyan(status)
+    if status == "ATTENTION":
+        return _yellow(status)
+    return _red(status)
+
+
 def show(path: Path = ANALYSIS_PATH,
-         source_health_path: Path = SOURCE_HEALTH_PATH) -> None:
+         source_health_path: Path = SOURCE_HEALTH_PATH,
+         snapshot_path: Path = SNAPSHOT_PATH) -> None:
     """Print feedback dashboard from analysis JSON. Handles missing file."""
     # --- Load ---
     if not path.exists():
@@ -106,6 +131,9 @@ def show(path: Path = ANALYSIS_PATH,
     by_urg  = data.get("by_urgency", {})
     ts      = data.get("ts_utc", "unknown")
 
+    # --- Combined snapshot (AC-108) ---
+    snap_data, snap_err = _load_snapshot(snapshot_path)
+
     # --- Source health (AC-106) ---
     sh_data, sh_err = _load_source_health(source_health_path)
 
@@ -129,6 +157,22 @@ def show(path: Path = ANALYSIS_PATH,
     print(_bold("║   ANT COLONY — Feedback Dashboard            ║"))
     print(_bold("╚══════════════════════════════════════════════╝"))
     print(f"  as-of : {ts}")
+    print()
+
+    # --- Overview (AC-108) ---
+    print(_bold("── Overview ─────────────────────────────────────"))
+    if snap_data and isinstance(snap_data, dict):
+        ov_status = snap_data.get("overview_status", "?")
+        sm        = snap_data.get("summary", {})
+        top_risk  = sm.get("top_risk",      "—") if isinstance(sm, dict) else "—"
+        human_ctx = sm.get("human_context", "—") if isinstance(sm, dict) else "—"
+        print(f"  status      : {_overview_colour(ov_status)}")
+        print(f"  top risk    : {top_risk}")
+        print(f"  human ctx   : {human_ctx}")
+    elif snap_err:
+        print(f"  {snap_err}")
+    else:
+        print("  (no data)")
     print()
 
     # --- Totals ---
