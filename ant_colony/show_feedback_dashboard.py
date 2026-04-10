@@ -1,0 +1,177 @@
+"""
+AC-UI-1: Feedback Dashboard (Read-Only CLI)
+
+Reads C:\\Trading\\ANT_OUT\\feedback_analysis.json and prints a compact
+human-readable overview. No file writes. No dependencies beyond stdlib.
+
+Usage:
+    python ant_colony/show_feedback_dashboard.py
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+
+ANALYSIS_PATH = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
+
+# ANSI colours (auto-disabled on systems that don't support them)
+try:
+    import sys
+    _COLOUR = sys.stdout.isatty()
+except Exception:
+    _COLOUR = False
+
+def _c(text: str, code: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _COLOUR else text
+
+def _green(t):  return _c(t, "32")
+def _yellow(t): return _c(t, "33")
+def _red(t):    return _c(t, "31")
+def _bold(t):   return _c(t, "1")
+def _cyan(t):   return _c(t, "36")
+
+
+def _bar(count: int, total: int, width: int = 20) -> str:
+    if total == 0:
+        return "[" + "-" * width + "]"
+    filled = round(count / total * width)
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def _align_colour(alignment: str) -> str:
+    if alignment == "HIGH":
+        return _green(alignment)
+    if alignment == "MEDIUM":
+        return _yellow(alignment)
+    return _red(alignment)
+
+
+def _attn_colour(needs: bool) -> str:
+    return _red("YES") if needs else _green("NO")
+
+
+def _pct(rate: float) -> str:
+    return f"{rate * 100:.1f}%"
+
+
+def show(path: Path = ANALYSIS_PATH) -> None:
+    """Print feedback dashboard from analysis JSON. Handles missing file."""
+    # --- Load ---
+    if not path.exists():
+        print(_bold("=== ANT COLONY — Feedback Dashboard ==="))
+        print()
+        print("  NO DATA — feedback_analysis.json not found.")
+        print(f"  Expected: {path}")
+        print()
+        print("  Run: python ant_colony/run_ac_scenarios_lite.py")
+        return
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(_bold("=== ANT COLONY — Feedback Dashboard ==="))
+        print()
+        print(f"  ERROR reading file: {exc}")
+        return
+
+    totals  = data.get("totals",  {})
+    rates   = data.get("rates",   {})
+    signals = data.get("signals", {})
+    by_ac   = data.get("by_action_class", {})
+    by_urg  = data.get("by_urgency", {})
+    ts      = data.get("ts_utc", "unknown")
+
+    n_entries   = totals.get("entries",   0)
+    n_confirm   = totals.get("confirm",   0)
+    n_disagree  = totals.get("disagree",  0)
+    n_uncertain = totals.get("uncertain", 0)
+    n_invalid   = totals.get("invalid",   0)
+
+    cr  = rates.get("confirm_rate",   0.0)
+    dr  = rates.get("disagree_rate",  0.0)
+    ur  = rates.get("uncertain_rate", 0.0)
+
+    alignment  = signals.get("system_human_alignment", "?")
+    needs_attn = signals.get("needs_attention", False)
+    attn_code  = signals.get("attention_reason_code", "NONE")
+
+    # --- Header ---
+    print()
+    print(_bold("╔══════════════════════════════════════════════╗"))
+    print(_bold("║   ANT COLONY — Feedback Dashboard            ║"))
+    print(_bold("╚══════════════════════════════════════════════╝"))
+    print(f"  as-of : {ts}")
+    print()
+
+    # --- Totals ---
+    print(_bold("── Totals ─────────────────────────────────────"))
+    print(f"  entries   : {n_entries}")
+    valid = n_confirm + n_disagree + n_uncertain
+    print(f"  valid     : {valid}  (invalid: {n_invalid})")
+    print()
+
+    # --- Feedback distribution ---
+    print(_bold("── Feedback Distribution ───────────────────────"))
+    print(f"  CONFIRM   : {n_confirm:>4}  {_bar(n_confirm,  valid)}  {_pct(cr)}")
+    print(f"  DISAGREE  : {n_disagree:>4}  {_bar(n_disagree, valid)}  {_pct(dr)}")
+    print(f"  UNCERTAIN : {n_uncertain:>4}  {_bar(n_uncertain,valid)}  {_pct(ur)}")
+    print()
+
+    # --- Signals ---
+    print(_bold("── Signals ─────────────────────────────────────"))
+    print(f"  alignment      : {_align_colour(alignment)}")
+    print(f"  needs_attention: {_attn_colour(needs_attn)}"
+          + (f"  ({attn_code})" if needs_attn else ""))
+    print()
+
+    # --- By action class ---
+    print(_bold("── By Action Class ─────────────────────────────"))
+    _print_group_table(by_ac, valid)
+    print()
+
+    # --- By urgency ---
+    print(_bold("── By Urgency ───────────────────────────────────"))
+    urgency_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"]
+    ordered_urg = {k: by_urg[k] for k in urgency_order if k in by_urg}
+    # append any extra keys not in the ordered list
+    for k, v in by_urg.items():
+        if k not in ordered_urg:
+            ordered_urg[k] = v
+    _print_group_table(ordered_urg, valid)
+    print()
+
+    # --- Flags reminder ---
+    flags = data.get("flags", {})
+    print(_bold("── Flags ───────────────────────────────────────"))
+    print(f"  non_binding             : {flags.get('non_binding', '?')}")
+    print(f"  simulation_only         : {flags.get('simulation_only', '?')}")
+    print(f"  paper_only              : {flags.get('paper_only', '?')}")
+    print(f"  live_activation_allowed : {flags.get('live_activation_allowed', '?')}")
+    print()
+
+
+def _print_group_table(groups: dict, total_valid: int) -> None:
+    if not groups:
+        print("  (no data)")
+        return
+    for key, g in groups.items():
+        if not isinstance(g, dict):
+            continue
+        n   = g.get("entries",   0)
+        c   = g.get("confirm",   0)
+        d   = g.get("disagree",  0)
+        u   = g.get("uncertain", 0)
+        if n == 0:
+            print(f"  {key:<32} {n:>4} entries  —")
+            continue
+        dr_local = d / (c + d + u) if (c + d + u) > 0 else 0.0
+        dr_str   = _pct(dr_local)
+        disagree_indicator = (
+            _red(f"  disagree={dr_str}") if dr_local > 0.3
+            else _yellow(f"  disagree={dr_str}") if dr_local > 0
+            else f"  disagree={dr_str}"
+        )
+        print(f"  {key:<32} {n:>4} entries  C:{c} D:{d} U:{u}{disagree_indicator}")
+
+
+if __name__ == "__main__":
+    show()
