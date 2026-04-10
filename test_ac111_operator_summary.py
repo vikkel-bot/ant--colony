@@ -61,27 +61,40 @@ def _recovery(status: str = "URGENT", requiring: int = 6,
     }
 
 
-def _captured(snapshot=None, health=None, recovery=None) -> str:
+def _trigger(status: str = "URGENT", action: str = "RUN_MANUAL_REFRESH_CHECK_NOW",
+             window: str = "NOW", reason: str = "SOURCE_CRITICAL") -> dict:
+    return {
+        "version":               "refresh_trigger_v1",
+        "trigger_status":        status,
+        "trigger_reason_code":   reason,
+        "refresh_check_required": status != "NONE",
+        "operator_guidance": {"recommended_action": action, "recommended_window": window},
+    }
+
+
+def _captured(snapshot=None, health=None, recovery=None, trigger=None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
-        for line in build_summary(snapshot, health, recovery):
+        for line in build_summary(snapshot, health, recovery, trigger):
             print(line)
     finally:
         sys.stdout = old
     return buf.getvalue()
 
 
-def _captured_show(tmp_path, snap_file=None, health_file=None, rec_file=None) -> str:
+def _captured_show(tmp_path, snap_file=None, health_file=None,
+                   rec_file=None, trigger_file=None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
         show(
-            snapshot_path = snap_file  or tmp_path / "nonexistent_snap.json",
-            health_path   = health_file or tmp_path / "nonexistent_health.json",
-            recovery_path = rec_file   or tmp_path / "nonexistent_rec.json",
+            snapshot_path = snap_file     or tmp_path / "nonexistent_snap.json",
+            health_path   = health_file   or tmp_path / "nonexistent_health.json",
+            recovery_path = rec_file      or tmp_path / "nonexistent_rec.json",
+            trigger_path  = trigger_file  or tmp_path / "nonexistent_trigger.json",
         )
     finally:
         sys.stdout = old
@@ -259,3 +272,58 @@ class TestFullOutput:
         _captured_show(tmp_path, snap_file=sp, health_file=hp, rec_file=rp)
         after = set(tmp_path.iterdir())
         assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 7. Refresh trigger (AC-115)
+# ---------------------------------------------------------------------------
+
+class TestRefreshTrigger:
+    def test_missing_trigger_no_crash(self):
+        build_summary(None, None, None, None)
+
+    def test_none_trigger_shows_no_data(self):
+        output = _captured(trigger=None)
+        assert "trigger" in output.lower()
+        assert "NO DATA" in output
+
+    def test_urgent_status_shown(self):
+        output = _captured(trigger=_trigger("URGENT"))
+        assert "URGENT" in output
+
+    def test_none_status_shown(self):
+        output = _captured(trigger=_trigger("NONE", "NONE", "NONE",
+                                            "SOURCE_HEALTHY_RECOVERY_NONE"))
+        assert "NONE" in output
+
+    def test_action_shown(self):
+        output = _captured(trigger=_trigger("URGENT", "RUN_MANUAL_REFRESH_CHECK_NOW"))
+        assert "RUN_MANUAL_REFRESH_CHECK_NOW" in output
+
+    def test_window_shown(self):
+        output = _captured(trigger=_trigger("URGENT", window="NOW"))
+        assert "NOW" in output
+
+    def test_watch_action_monitor(self):
+        output = _captured(trigger=_trigger("WATCH", "MONITOR", "LATER",
+                                            "SOURCE_DEGRADED"))
+        assert "MONITOR" in output
+        assert "LATER" in output
+
+    def test_missing_trigger_file_no_crash(self, tmp_path):
+        _captured_show(tmp_path)
+
+    def test_valid_trigger_file_shown(self, tmp_path):
+        tp = tmp_path / "trigger.json"
+        tp.write_text(json.dumps(_trigger("URGENT")), encoding="utf-8")
+        output = _captured_show(tmp_path, trigger_file=tp)
+        assert "URGENT" in output
+
+    def test_corrupt_trigger_file_no_crash(self, tmp_path):
+        tp = tmp_path / "trigger.json"
+        tp.write_text("{ bad json {{{", encoding="utf-8")
+        _captured_show(tmp_path, trigger_file=tp)
+
+    def test_trigger_label_present(self):
+        output = _captured(trigger=_trigger())
+        assert "trigger" in output.lower()

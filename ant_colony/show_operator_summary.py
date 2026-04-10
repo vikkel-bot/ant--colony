@@ -23,6 +23,7 @@ from pathlib import Path
 SNAPSHOT_PATH  = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
 HEALTH_PATH    = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 RECOVERY_PATH  = Path(r"C:\Trading\ANT_OUT\source_freshness_recovery_plan.json")
+TRIGGER_PATH   = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
 
 
 def _load(path: Path) -> dict | None:
@@ -37,6 +38,7 @@ def build_summary(
     snapshot: dict | None,
     health:   dict | None,
     recovery: dict | None,
+    trigger:  dict | None = None,
 ) -> list[str]:
     """
     Build summary lines from loaded dicts.
@@ -86,6 +88,18 @@ def build_summary(
     else:
         lines.append("recovery : NO DATA")
 
+    # ── Refresh trigger (AC-114) ──────────────────────────────────────────────
+    if trigger and isinstance(trigger, dict):
+        tr_status = trigger.get("trigger_status", "?")
+        tr_og     = trigger.get("operator_guidance", {})
+        tr_action = tr_og.get("recommended_action", "?") if isinstance(tr_og, dict) else "?"
+        tr_window = tr_og.get("recommended_window", "?") if isinstance(tr_og, dict) else "?"
+        lines.append(
+            f"trigger  : {tr_status} | action={tr_action} | window={tr_window}"
+        )
+    else:
+        lines.append("trigger  : NO DATA")
+
     return lines
 
 
@@ -93,13 +107,15 @@ def show(
     snapshot_path: Path = SNAPSHOT_PATH,
     health_path:   Path = HEALTH_PATH,
     recovery_path: Path = RECOVERY_PATH,
+    trigger_path:  Path = TRIGGER_PATH,
 ) -> None:
     """Load sources and print operator summary. No file writes."""
     snapshot = _load(snapshot_path)
     health   = _load(health_path)
     recovery = _load(recovery_path)
+    trigger  = _load(trigger_path)
 
-    for line in build_summary(snapshot, health, recovery):
+    for line in build_summary(snapshot, health, recovery, trigger):
         print(line)
 
 

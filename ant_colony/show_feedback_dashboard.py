@@ -13,6 +13,9 @@ a compact daily overview in the dashboard header.
 AC-110: also reads C:\\Trading\\ANT_OUT\\source_freshness_recovery_plan.json to
 show the recovery plan for stale/missing sources.
 
+AC-115: also reads C:\\Trading\\ANT_OUT\\refresh_trigger.json to show the
+semi-automatic refresh trigger in the dashboard header.
+
 Usage:
     python ant_colony/show_feedback_dashboard.py
 """
@@ -24,6 +27,7 @@ ANALYSIS_PATH      = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
 SOURCE_HEALTH_PATH = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 SNAPSHOT_PATH      = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
 RECOVERY_PATH      = Path(r"C:\Trading\ANT_OUT\source_freshness_recovery_plan.json")
+TRIGGER_PATH       = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
 
 # ANSI colours (auto-disabled on systems that don't support them)
 try:
@@ -73,6 +77,16 @@ def _pct(rate: float) -> str:
     return f"{rate * 100:.1f}%"
 
 
+def _load_trigger(path: Path) -> tuple[dict | None, str | None]:
+    """Load refresh_trigger.json. Returns (data, None) or (None, msg)."""
+    if not path.exists():
+        return None, "NO DATA"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"ERROR: {exc}"
+
+
 def _load_snapshot(path: Path) -> tuple[dict | None, str | None]:
     """Load combined_review_snapshot.json. Returns (data, None) or (None, msg)."""
     if not path.exists():
@@ -119,7 +133,8 @@ def _overview_colour(status: str) -> str:
 def show(path: Path = ANALYSIS_PATH,
          source_health_path: Path = SOURCE_HEALTH_PATH,
          snapshot_path: Path = SNAPSHOT_PATH,
-         recovery_path: Path = RECOVERY_PATH) -> None:
+         recovery_path: Path = RECOVERY_PATH,
+         trigger_path: Path = TRIGGER_PATH) -> None:
     """Print feedback dashboard from analysis JSON. Handles missing file."""
     # --- Load ---
     if not path.exists():
@@ -154,6 +169,9 @@ def show(path: Path = ANALYSIS_PATH,
 
     # --- Source health (AC-106) ---
     sh_data, sh_err = _load_source_health(source_health_path)
+
+    # --- Refresh trigger (AC-115) ---
+    tr_data, tr_err = _load_trigger(trigger_path)
 
     n_entries   = totals.get("entries",   0)
     n_confirm   = totals.get("confirm",   0)
@@ -191,6 +209,20 @@ def show(path: Path = ANALYSIS_PATH,
         print(f"  {snap_err}")
     else:
         print("  (no data)")
+
+    # --- Refresh trigger (AC-115) ---
+    if tr_data and isinstance(tr_data, dict):
+        tr_status = tr_data.get("trigger_status", "?")
+        tr_rc     = tr_data.get("trigger_reason_code", "?")
+        tr_og     = tr_data.get("operator_guidance", {})
+        tr_action = tr_og.get("recommended_action", "?") if isinstance(tr_og, dict) else "?"
+        tr_window = tr_og.get("recommended_window", "?") if isinstance(tr_og, dict) else "?"
+        print(f"  refresh trigger : {tr_status}  ({tr_rc})")
+        print(f"  recommended     : {tr_action} / {tr_window}")
+    elif tr_err:
+        print(f"  refresh trigger : {tr_err}")
+    else:
+        print("  refresh trigger : (no data)")
     print()
 
     # --- Totals ---

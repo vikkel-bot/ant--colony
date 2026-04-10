@@ -69,7 +69,8 @@ def _analysis() -> dict:
 
 def _captured(path: Path, health_path: Path | None = None,
               snapshot_path: Path | None = None,
-              recovery_path: Path | None = None) -> str:
+              recovery_path: Path | None = None,
+              trigger_path: Path | None = None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
@@ -79,7 +80,9 @@ def _captured(path: Path, health_path: Path | None = None,
         hp = health_path   if health_path   is not None else Path("C:/nonexistent/health.json")
         sp = snapshot_path if snapshot_path is not None else Path("C:/nonexistent/snapshot.json")
         rp = recovery_path if recovery_path is not None else Path("C:/nonexistent/recovery.json")
-        show(path, source_health_path=hp, snapshot_path=sp, recovery_path=rp)
+        tp = trigger_path  if trigger_path  is not None else Path("C:/nonexistent/trigger.json")
+        show(path, source_health_path=hp, snapshot_path=sp, recovery_path=rp,
+             trigger_path=tp)
     finally:
         sys.stdout = old
     return buf.getvalue()
@@ -561,5 +564,110 @@ class TestRecoveryPlan:
         rp = _write_recovery(tmp_path, _recovery())
         before = set(f.name for f in tmp_path.iterdir())
         _captured(ap, recovery_path=rp)
+        after  = set(f.name for f in tmp_path.iterdir())
+        assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 8. Refresh trigger (AC-115)
+# ---------------------------------------------------------------------------
+
+def _trigger_data(status: str = "URGENT",
+                  action: str = "RUN_MANUAL_REFRESH_CHECK_NOW",
+                  window: str = "NOW",
+                  reason: str = "SOURCE_CRITICAL") -> dict:
+    return {
+        "version":                "refresh_trigger_v1",
+        "component":              "build_refresh_trigger_lite",
+        "ts_utc":                 "2026-04-10T12:00:00Z",
+        "refresh_check_required": status != "NONE",
+        "trigger_status":         status,
+        "trigger_reason_code":    reason,
+        "summary": {
+            "source_health_status":       "CRITICAL",
+            "recovery_status":            "URGENT",
+            "markets_requiring_recovery": 6,
+        },
+        "operator_guidance": {
+            "recommended_action": action,
+            "recommended_window": window,
+        },
+        "flags": {"non_binding": True, "simulation_only": True,
+                  "paper_only": True, "live_activation_allowed": False},
+    }
+
+
+def _write_trigger(tmp_path, data: dict) -> Path:
+    p = tmp_path / "trigger.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+class TestRefreshTrigger:
+    def test_missing_trigger_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        _captured(ap, trigger_path=tmp_path / "nonexistent.json")
+
+    def test_missing_trigger_shows_no_data(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        output = _captured(ap, trigger_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_trigger_no_crash(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "trigger.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        _captured(ap, trigger_path=bad)
+
+    def test_corrupt_trigger_shows_error(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "trigger.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(ap, trigger_path=bad)
+        assert "ERROR" in output
+
+    def test_urgent_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data("URGENT"))
+        output = _captured(ap, trigger_path=tp)
+        assert "URGENT" in output
+
+    def test_action_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data("URGENT", "RUN_MANUAL_REFRESH_CHECK_NOW"))
+        output = _captured(ap, trigger_path=tp)
+        assert "RUN_MANUAL_REFRESH_CHECK_NOW" in output
+
+    def test_window_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data("URGENT", window="NOW"))
+        output = _captured(ap, trigger_path=tp)
+        assert "NOW" in output
+
+    def test_reason_code_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data(reason="SOURCE_CRITICAL"))
+        output = _captured(ap, trigger_path=tp)
+        assert "SOURCE_CRITICAL" in output
+
+    def test_watch_monitor_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data("WATCH", "MONITOR", "LATER",
+                                                    "SOURCE_DEGRADED"))
+        output = _captured(ap, trigger_path=tp)
+        assert "WATCH" in output
+        assert "MONITOR" in output
+
+    def test_trigger_label_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data())
+        output = _captured(ap, trigger_path=tp)
+        assert "refresh trigger" in output or "trigger" in output.lower()
+
+    def test_no_extra_files_written(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        tp = _write_trigger(tmp_path, _trigger_data())
+        before = set(f.name for f in tmp_path.iterdir())
+        _captured(ap, trigger_path=tp)
         after  = set(f.name for f in tmp_path.iterdir())
         assert before == after
