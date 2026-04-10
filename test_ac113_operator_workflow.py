@@ -32,18 +32,31 @@ from show_operator_workflow import show, _load_trigger, _trigger_block
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOFILE = Path("C:/nonexistent/trigger.json")
+_NOFILE     = Path("C:/nonexistent/trigger.json")
+_NOFILE_RD  = Path("C:/nonexistent/readiness.json")
 
 
-def _captured(trigger_path: Path = _NOFILE) -> str:
+def _captured(trigger_path: Path = _NOFILE,
+              readiness_path: Path = _NOFILE_RD) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
-        show(trigger_path=trigger_path)
+        show(trigger_path=trigger_path, readiness_path=readiness_path)
     finally:
         sys.stdout = old
     return buf.getvalue()
+
+
+def _readiness(status: str = "NOT_READY", score: int = 0,
+               reason: str = "SOURCE_HEALTH_CRITICAL") -> dict:
+    return {
+        "version":          "system_readiness_score_v1",
+        "readiness_status": status,
+        "readiness_score":  score,
+        "reason_code":      reason,
+        "blocking":         status == "NOT_READY",
+    }
 
 
 def _trigger(status: str = "URGENT",
@@ -213,7 +226,7 @@ class TestDeterminism:
 
     def test_no_file_writes(self, tmp_path):
         before = set(tmp_path.iterdir())
-        show(trigger_path=_NOFILE)
+        show(trigger_path=_NOFILE, readiness_path=_NOFILE_RD)
         after = set(tmp_path.iterdir())
         assert before == after
 
@@ -327,6 +340,100 @@ class TestLiveTriggerSection:
         tp = tmp_path / "trigger.json"
         tp.write_text(json.dumps(_trigger()), encoding="utf-8")
         before = set(tmp_path.iterdir())
-        show(trigger_path=tp)
+        show(trigger_path=tp, readiness_path=_NOFILE_RD)
+        after = set(tmp_path.iterdir())
+        assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 10. Readiness interpretation rules (AC-118) — static section
+# ---------------------------------------------------------------------------
+
+class TestReadinessInterpretationRules:
+    def test_ready_rule_present(self):
+        output = _captured()
+        assert "readiness=READY" in output or "READY" in output
+
+    def test_limited_rule_present(self):
+        output = _captured()
+        assert "readiness=LIMITED" in output or "LIMITED" in output
+
+    def test_not_ready_rule_present(self):
+        output = _captured()
+        assert "readiness=NOT_READY" in output or "NOT_READY" in output
+
+    def test_readiness_interpretation_header(self):
+        output = _captured()
+        assert "Readiness interpretation" in output or "readiness" in output.lower()
+
+    def test_ready_stable_for_evaluation(self):
+        output = _captured()
+        assert "stable for evaluation" in output or "READY" in output
+
+    def test_not_ready_fix_first(self):
+        output = _captured()
+        assert "fix system state" in output or "NOT_READY" in output
+
+
+# ---------------------------------------------------------------------------
+# 11. Live readiness section (AC-118) — dynamic current status
+# ---------------------------------------------------------------------------
+
+class TestLiveReadinessSection:
+    def test_missing_readiness_no_crash(self, tmp_path):
+        show(trigger_path=_NOFILE, readiness_path=tmp_path / "nonexistent.json")
+
+    def test_missing_readiness_no_data_shown(self, tmp_path):
+        output = _captured(readiness_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_readiness_no_crash(self, tmp_path):
+        bad = tmp_path / "readiness.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        show(trigger_path=_NOFILE, readiness_path=bad)
+
+    def test_corrupt_readiness_no_data_shown(self, tmp_path):
+        bad = tmp_path / "readiness.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(readiness_path=bad)
+        assert "NO DATA" in output
+
+    def test_not_ready_shown(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness("NOT_READY", 0)), encoding="utf-8")
+        output = _captured(readiness_path=rp)
+        assert "NOT_READY" in output
+
+    def test_ready_shown(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness("READY", 100, "SYSTEM_READY")),
+                      encoding="utf-8")
+        output = _captured(readiness_path=rp)
+        assert "READY" in output
+
+    def test_limited_shown(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness("LIMITED", 55, "TRIGGER_URGENT")),
+                      encoding="utf-8")
+        output = _captured(readiness_path=rp)
+        assert "LIMITED" in output
+
+    def test_score_shown(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness("NOT_READY", 0)), encoding="utf-8")
+        output = _captured(readiness_path=rp)
+        assert "0" in output
+
+    def test_current_readiness_section_header(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness()), encoding="utf-8")
+        output = _captured(readiness_path=rp)
+        assert "Current readiness" in output or "readiness" in output.lower()
+
+    def test_no_file_writes(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness()), encoding="utf-8")
+        before = set(tmp_path.iterdir())
+        show(trigger_path=_NOFILE, readiness_path=rp)
         after = set(tmp_path.iterdir())
         assert before == after

@@ -28,6 +28,7 @@ SOURCE_HEALTH_PATH = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 SNAPSHOT_PATH      = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
 RECOVERY_PATH      = Path(r"C:\Trading\ANT_OUT\source_freshness_recovery_plan.json")
 TRIGGER_PATH       = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
+READINESS_PATH     = Path(r"C:\Trading\ANT_OUT\system_readiness_score.json")
 
 # ANSI colours (auto-disabled on systems that don't support them)
 try:
@@ -75,6 +76,16 @@ def _attn_colour(needs: bool) -> str:
 
 def _pct(rate: float) -> str:
     return f"{rate * 100:.1f}%"
+
+
+def _load_readiness(path: Path) -> tuple[dict | None, str | None]:
+    """Load system_readiness_score.json. Returns (data, None) or (None, msg)."""
+    if not path.exists():
+        return None, "NO DATA"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"ERROR: {exc}"
 
 
 def _load_trigger(path: Path) -> tuple[dict | None, str | None]:
@@ -134,7 +145,8 @@ def show(path: Path = ANALYSIS_PATH,
          source_health_path: Path = SOURCE_HEALTH_PATH,
          snapshot_path: Path = SNAPSHOT_PATH,
          recovery_path: Path = RECOVERY_PATH,
-         trigger_path: Path = TRIGGER_PATH) -> None:
+         trigger_path: Path = TRIGGER_PATH,
+         readiness_path: Path = READINESS_PATH) -> None:
     """Print feedback dashboard from analysis JSON. Handles missing file."""
     # --- Load ---
     if not path.exists():
@@ -173,6 +185,9 @@ def show(path: Path = ANALYSIS_PATH,
     # --- Refresh trigger (AC-115) ---
     tr_data, tr_err = _load_trigger(trigger_path)
 
+    # --- System readiness (AC-118) ---
+    rd_data, rd_err = _load_readiness(readiness_path)
+
     n_entries   = totals.get("entries",   0)
     n_confirm   = totals.get("confirm",   0)
     n_disagree  = totals.get("disagree",  0)
@@ -203,12 +218,33 @@ def show(path: Path = ANALYSIS_PATH,
         top_risk  = sm.get("top_risk",      "—") if isinstance(sm, dict) else "—"
         human_ctx = sm.get("human_context", "—") if isinstance(sm, dict) else "—"
         print(f"  status      : {_overview_colour(ov_status)}")
+        # Readiness score inline (AC-118)
+        if rd_data and isinstance(rd_data, dict):
+            rd_status = rd_data.get("readiness_status", "?")
+            rd_score  = rd_data.get("readiness_score",  "?")
+            print(f"  readiness   : {rd_status} ({rd_score}/100)")
+        elif rd_err:
+            print(f"  readiness   : {rd_err}")
+        else:
+            print("  readiness   : (no data)")
         print(f"  top risk    : {top_risk}")
         print(f"  human ctx   : {human_ctx}")
     elif snap_err:
         print(f"  {snap_err}")
+        if rd_data and isinstance(rd_data, dict):
+            rd_status = rd_data.get("readiness_status", "?")
+            rd_score  = rd_data.get("readiness_score",  "?")
+            print(f"  readiness   : {rd_status} ({rd_score}/100)")
+        elif rd_err:
+            print(f"  readiness   : {rd_err}")
     else:
         print("  (no data)")
+        if rd_data and isinstance(rd_data, dict):
+            rd_status = rd_data.get("readiness_status", "?")
+            rd_score  = rd_data.get("readiness_score",  "?")
+            print(f"  readiness   : {rd_status} ({rd_score}/100)")
+        elif rd_err:
+            print(f"  readiness   : {rd_err}")
 
     # --- Refresh trigger (AC-115) ---
     if tr_data and isinstance(tr_data, dict):

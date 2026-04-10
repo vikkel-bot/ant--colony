@@ -13,7 +13,8 @@ Usage:
 import json
 from pathlib import Path
 
-TRIGGER_PATH = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
+TRIGGER_PATH   = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
+READINESS_PATH = Path(r"C:\Trading\ANT_OUT\system_readiness_score.json")
 
 _WORKFLOW = """\
 === ANT DAILY WORKFLOW ===
@@ -66,6 +67,12 @@ _WORKFLOW = """\
   trigger=DUE     → run step 1 (refresh check) soon
   trigger=URGENT  → run step 1 (refresh check) immediately
 
+── Readiness interpretation ──────────────────────────────────────────────────
+
+  readiness=READY     → system stable for evaluation
+  readiness=LIMITED   → partial trust, monitor closely
+  readiness=NOT_READY → fix system state first
+
 ── Notes ─────────────────────────────────────────────────────────────────────
 
   All outputs are:  non_binding=True  simulation_only=True
@@ -73,6 +80,31 @@ _WORKFLOW = """\
 
   No action in this workflow triggers execution or broker calls.
 """
+
+
+def _load_readiness(path: Path) -> dict | None:
+    """Load system_readiness_score.json. Returns None on missing/corrupt (fail-closed)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _readiness_block(readiness: dict | None) -> str:
+    """Build live current-readiness section as a string. Pure — no I/O."""
+    lines = ["── Current readiness ───────────────────────────────────────────────────────"]
+    if readiness and isinstance(readiness, dict):
+        rd_status  = readiness.get("readiness_status", "?")
+        rd_score   = readiness.get("readiness_score",  "?")
+        rd_reason  = readiness.get("reason_code",      "?")
+        rd_blocking = readiness.get("blocking", False)
+        lines.append(f"  readiness : {rd_status} ({rd_score}/100)")
+        lines.append(f"  reason    : {rd_reason}")
+        lines.append(f"  blocking  : {rd_blocking}")
+    else:
+        lines.append("  NO DATA — system_readiness_score.json not found or corrupt")
+        lines.append("  Run: python ant_colony/build_system_readiness_score_lite.py")
+    return "\n".join(lines) + "\n"
 
 
 def _load_trigger(path: Path) -> dict | None:
@@ -104,11 +136,14 @@ def _trigger_block(trigger: dict | None, path: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def show(trigger_path: Path = TRIGGER_PATH) -> None:
-    """Print the daily operator workflow with live trigger status. No file writes."""
+def show(trigger_path: Path = TRIGGER_PATH,
+         readiness_path: Path = READINESS_PATH) -> None:
+    """Print the daily operator workflow with live trigger and readiness. No file writes."""
     print(_WORKFLOW)
-    trigger = _load_trigger(trigger_path)
+    trigger   = _load_trigger(trigger_path)
     print(_trigger_block(trigger, trigger_path))
+    readiness = _load_readiness(readiness_path)
+    print(_readiness_block(readiness))
 
 
 if __name__ == "__main__":

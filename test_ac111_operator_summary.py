@@ -72,12 +72,24 @@ def _trigger(status: str = "URGENT", action: str = "RUN_MANUAL_REFRESH_CHECK_NOW
     }
 
 
-def _captured(snapshot=None, health=None, recovery=None, trigger=None) -> str:
+def _readiness(status: str = "READY", score: int = 100,
+               reason: str = "SYSTEM_READY") -> dict:
+    return {
+        "version":          "system_readiness_score_v1",
+        "readiness_status": status,
+        "readiness_score":  score,
+        "reason_code":      reason,
+        "blocking":         status == "NOT_READY",
+    }
+
+
+def _captured(snapshot=None, health=None, recovery=None,
+              trigger=None, readiness=None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
-        for line in build_summary(snapshot, health, recovery, trigger):
+        for line in build_summary(snapshot, health, recovery, trigger, readiness):
             print(line)
     finally:
         sys.stdout = old
@@ -85,16 +97,17 @@ def _captured(snapshot=None, health=None, recovery=None, trigger=None) -> str:
 
 
 def _captured_show(tmp_path, snap_file=None, health_file=None,
-                   rec_file=None, trigger_file=None) -> str:
+                   rec_file=None, trigger_file=None, readiness_file=None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
         show(
-            snapshot_path = snap_file     or tmp_path / "nonexistent_snap.json",
-            health_path   = health_file   or tmp_path / "nonexistent_health.json",
-            recovery_path = rec_file      or tmp_path / "nonexistent_rec.json",
-            trigger_path  = trigger_file  or tmp_path / "nonexistent_trigger.json",
+            snapshot_path  = snap_file      or tmp_path / "nonexistent_snap.json",
+            health_path    = health_file    or tmp_path / "nonexistent_health.json",
+            recovery_path  = rec_file       or tmp_path / "nonexistent_rec.json",
+            trigger_path   = trigger_file   or tmp_path / "nonexistent_trigger.json",
+            readiness_path = readiness_file or tmp_path / "nonexistent_readiness.json",
         )
     finally:
         sys.stdout = old
@@ -327,3 +340,55 @@ class TestRefreshTrigger:
     def test_trigger_label_present(self):
         output = _captured(trigger=_trigger())
         assert "trigger" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# 8. System readiness (AC-118)
+# ---------------------------------------------------------------------------
+
+class TestSystemReadiness:
+    def test_none_readiness_no_crash(self):
+        build_summary(None, None, None, None, None)
+
+    def test_none_readiness_shows_no_data(self):
+        output = _captured(readiness=None)
+        assert "readiness" in output.lower()
+        assert "NO DATA" in output
+
+    def test_ready_status_shown(self):
+        output = _captured(readiness=_readiness("READY", 100))
+        assert "READY" in output
+
+    def test_limited_status_shown(self):
+        output = _captured(readiness=_readiness("LIMITED", 55))
+        assert "LIMITED" in output
+
+    def test_not_ready_status_shown(self):
+        output = _captured(readiness=_readiness("NOT_READY", 0))
+        assert "NOT_READY" in output
+
+    def test_score_shown(self):
+        output = _captured(readiness=_readiness("READY", 100))
+        assert "100" in output
+
+    def test_score_zero_shown(self):
+        output = _captured(readiness=_readiness("NOT_READY", 0))
+        assert "0" in output
+
+    def test_readiness_label_present(self):
+        output = _captured(readiness=_readiness())
+        assert "readiness" in output.lower()
+
+    def test_missing_readiness_file_no_crash(self, tmp_path):
+        _captured_show(tmp_path)
+
+    def test_valid_readiness_file_shown(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text(json.dumps(_readiness("NOT_READY", 0)), encoding="utf-8")
+        output = _captured_show(tmp_path, readiness_file=rp)
+        assert "NOT_READY" in output
+
+    def test_corrupt_readiness_file_no_crash(self, tmp_path):
+        rp = tmp_path / "readiness.json"
+        rp.write_text("{ bad json {{{", encoding="utf-8")
+        _captured_show(tmp_path, readiness_file=rp)

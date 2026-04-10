@@ -24,6 +24,7 @@ SNAPSHOT_PATH  = Path(r"C:\Trading\ANT_OUT\combined_review_snapshot.json")
 HEALTH_PATH    = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 RECOVERY_PATH  = Path(r"C:\Trading\ANT_OUT\source_freshness_recovery_plan.json")
 TRIGGER_PATH   = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
+READINESS_PATH = Path(r"C:\Trading\ANT_OUT\system_readiness_score.json")
 
 
 def _load(path: Path) -> dict | None:
@@ -35,10 +36,11 @@ def _load(path: Path) -> dict | None:
 
 
 def build_summary(
-    snapshot: dict | None,
-    health:   dict | None,
-    recovery: dict | None,
-    trigger:  dict | None = None,
+    snapshot:  dict | None,
+    health:    dict | None,
+    recovery:  dict | None,
+    trigger:   dict | None = None,
+    readiness: dict | None = None,
 ) -> list[str]:
     """
     Build summary lines from loaded dicts.
@@ -100,22 +102,32 @@ def build_summary(
     else:
         lines.append("trigger  : NO DATA")
 
+    # ── System readiness (AC-117) ─────────────────────────────────────────────
+    if readiness and isinstance(readiness, dict):
+        rd_status = readiness.get("readiness_status", "?")
+        rd_score  = readiness.get("readiness_score",  "?")
+        lines.append(f"readiness: {rd_status} | score={rd_score}/100")
+    else:
+        lines.append("readiness: NO DATA")
+
     return lines
 
 
 def show(
-    snapshot_path: Path = SNAPSHOT_PATH,
-    health_path:   Path = HEALTH_PATH,
-    recovery_path: Path = RECOVERY_PATH,
-    trigger_path:  Path = TRIGGER_PATH,
+    snapshot_path:  Path = SNAPSHOT_PATH,
+    health_path:    Path = HEALTH_PATH,
+    recovery_path:  Path = RECOVERY_PATH,
+    trigger_path:   Path = TRIGGER_PATH,
+    readiness_path: Path = READINESS_PATH,
 ) -> None:
     """Load sources and print operator summary. No file writes."""
-    snapshot = _load(snapshot_path)
-    health   = _load(health_path)
-    recovery = _load(recovery_path)
-    trigger  = _load(trigger_path)
+    snapshot  = _load(snapshot_path)
+    health    = _load(health_path)
+    recovery  = _load(recovery_path)
+    trigger   = _load(trigger_path)
+    readiness = _load(readiness_path)
 
-    for line in build_summary(snapshot, health, recovery, trigger):
+    for line in build_summary(snapshot, health, recovery, trigger, readiness):
         print(line)
 
 

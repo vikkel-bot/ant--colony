@@ -70,19 +70,21 @@ def _analysis() -> dict:
 def _captured(path: Path, health_path: Path | None = None,
               snapshot_path: Path | None = None,
               recovery_path: Path | None = None,
-              trigger_path: Path | None = None) -> str:
+              trigger_path: Path | None = None,
+              readiness_path: Path | None = None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
         # Pass nonexistent paths when not supplied so tests stay deterministic
         # regardless of what exists on disk.
-        hp = health_path   if health_path   is not None else Path("C:/nonexistent/health.json")
-        sp = snapshot_path if snapshot_path is not None else Path("C:/nonexistent/snapshot.json")
-        rp = recovery_path if recovery_path is not None else Path("C:/nonexistent/recovery.json")
-        tp = trigger_path  if trigger_path  is not None else Path("C:/nonexistent/trigger.json")
+        hp = health_path    if health_path    is not None else Path("C:/nonexistent/health.json")
+        sp = snapshot_path  if snapshot_path  is not None else Path("C:/nonexistent/snapshot.json")
+        rp = recovery_path  if recovery_path  is not None else Path("C:/nonexistent/recovery.json")
+        tp = trigger_path   if trigger_path   is not None else Path("C:/nonexistent/trigger.json")
+        rdp = readiness_path if readiness_path is not None else Path("C:/nonexistent/readiness.json")
         show(path, source_health_path=hp, snapshot_path=sp, recovery_path=rp,
-             trigger_path=tp)
+             trigger_path=tp, readiness_path=rdp)
     finally:
         sys.stdout = old
     return buf.getvalue()
@@ -669,5 +671,99 @@ class TestRefreshTrigger:
         tp = _write_trigger(tmp_path, _trigger_data())
         before = set(f.name for f in tmp_path.iterdir())
         _captured(ap, trigger_path=tp)
+        after  = set(f.name for f in tmp_path.iterdir())
+        assert before == after
+
+
+# ---------------------------------------------------------------------------
+# 9. System readiness (AC-118)
+# ---------------------------------------------------------------------------
+
+def _readiness_data(status: str = "NOT_READY", score: int = 0,
+                    reason: str = "SOURCE_HEALTH_CRITICAL") -> dict:
+    return {
+        "version":          "system_readiness_score_v1",
+        "component":        "build_system_readiness_score_lite",
+        "ts_utc":           "2026-04-10T12:00:00Z",
+        "readiness_score":  score,
+        "readiness_status": status,
+        "components": {
+            "source_health":    "CRITICAL",
+            "review_alignment": "LOW",
+            "recovery_status":  "URGENT",
+            "trigger_status":   "URGENT",
+        },
+        "blocking":    status == "NOT_READY",
+        "reason_code": reason,
+        "flags": {"non_execution": True, "read_only": True},
+    }
+
+
+def _write_readiness(tmp_path, data: dict) -> Path:
+    p = tmp_path / "readiness.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+class TestSystemReadiness:
+    def test_missing_readiness_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        _captured(ap, readiness_path=tmp_path / "nonexistent.json")
+
+    def test_missing_readiness_shows_no_data(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        sp = _write_snapshot(tmp_path, _snapshot())
+        output = _captured(ap, snapshot_path=sp,
+                           readiness_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_readiness_no_crash(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        bad = tmp_path / "readiness.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        _captured(ap, readiness_path=bad)
+
+    def test_corrupt_readiness_shows_error(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot())
+        bad = tmp_path / "readiness.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(ap, snapshot_path=sp, readiness_path=bad)
+        assert "ERROR" in output
+
+    def test_not_ready_status_shown(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot("CRITICAL"))
+        rdp = _write_readiness(tmp_path, _readiness_data("NOT_READY", 0))
+        output = _captured(ap, snapshot_path=sp, readiness_path=rdp)
+        assert "NOT_READY" in output
+
+    def test_ready_status_shown(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot("HEALTHY"))
+        rdp = _write_readiness(tmp_path, _readiness_data("READY", 100, "SYSTEM_READY"))
+        output = _captured(ap, snapshot_path=sp, readiness_path=rdp)
+        assert "READY" in output
+
+    def test_score_shown(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot("CRITICAL"))
+        rdp = _write_readiness(tmp_path, _readiness_data("NOT_READY", 0))
+        output = _captured(ap, snapshot_path=sp, readiness_path=rdp)
+        assert "0" in output
+
+    def test_readiness_label_shown(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot())
+        rdp = _write_readiness(tmp_path, _readiness_data())
+        output = _captured(ap, snapshot_path=sp, readiness_path=rdp)
+        assert "readiness" in output.lower()
+
+    def test_no_extra_files_written(self, tmp_path):
+        ap  = _analysis_path(tmp_path)
+        sp  = _write_snapshot(tmp_path, _snapshot())
+        rdp = _write_readiness(tmp_path, _readiness_data())
+        before = set(f.name for f in tmp_path.iterdir())
+        _captured(ap, snapshot_path=sp, readiness_path=rdp)
         after  = set(f.name for f in tmp_path.iterdir())
         assert before == after
