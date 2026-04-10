@@ -1,12 +1,19 @@
 """
 AC-113: Operator Workflow (Daily Routine)
+AC-116: Refresh Trigger Integration
 
 Prints a compact, repeatable daily operator workflow.
-Read-only — no execution, no file writes, no external dependencies.
+AC-116 adds live refresh trigger status from refresh_trigger.json (AC-114).
+Read-only — no execution, no file writes.
 
 Usage:
     python ant_colony/show_operator_workflow.py
 """
+
+import json
+from pathlib import Path
+
+TRIGGER_PATH = Path(r"C:\Trading\ANT_OUT\refresh_trigger.json")
 
 _WORKFLOW = """\
 === ANT DAILY WORKFLOW ===
@@ -52,6 +59,13 @@ _WORKFLOW = """\
   CLEAR conditions:
     health=HEALTHY + overview=HEALTHY — no source or review issues
 
+── Trigger interpretation ────────────────────────────────────────────────────
+
+  trigger=NONE    → proceed normally — no refresh needed
+  trigger=WATCH   → monitor — re-run operator summary later
+  trigger=DUE     → run step 1 (refresh check) soon
+  trigger=URGENT  → run step 1 (refresh check) immediately
+
 ── Notes ─────────────────────────────────────────────────────────────────────
 
   All outputs are:  non_binding=True  simulation_only=True
@@ -61,9 +75,40 @@ _WORKFLOW = """\
 """
 
 
-def show() -> None:
-    """Print the daily operator workflow. No file writes."""
+def _load_trigger(path: Path) -> dict | None:
+    """Load refresh_trigger.json. Returns None on missing/corrupt (fail-closed)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _trigger_block(trigger: dict | None, path: Path) -> str:
+    """
+    Build the live current-trigger section as a string.
+    Pure — no I/O.
+    """
+    lines = ["── Current trigger ─────────────────────────────────────────────────────────"]
+    if trigger and isinstance(trigger, dict):
+        st  = trigger.get("trigger_status", "?")
+        rc  = trigger.get("trigger_reason_code", "?")
+        og  = trigger.get("operator_guidance", {})
+        act = og.get("recommended_action", "?") if isinstance(og, dict) else "?"
+        win = og.get("recommended_window", "?") if isinstance(og, dict) else "?"
+        lines.append(f"  trigger : {st}  ({rc})")
+        lines.append(f"  action  : {act}")
+        lines.append(f"  window  : {win}")
+    else:
+        lines.append(f"  NO DATA — refresh_trigger.json not found or corrupt")
+        lines.append(f"  Run: python ant_colony/build_refresh_trigger_lite.py")
+    return "\n".join(lines) + "\n"
+
+
+def show(trigger_path: Path = TRIGGER_PATH) -> None:
+    """Print the daily operator workflow with live trigger status. No file writes."""
     print(_WORKFLOW)
+    trigger = _load_trigger(trigger_path)
+    print(_trigger_block(trigger, trigger_path))
 
 
 if __name__ == "__main__":
