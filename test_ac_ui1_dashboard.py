@@ -8,6 +8,7 @@ Coverage:
   - key sections present in output
   - no file writes (read-only)
   - output contains expected fields
+  - AC-106: source health section shown / missing / corrupt
 """
 import sys
 import json
@@ -65,12 +66,15 @@ def _analysis() -> dict:
     }
 
 
-def _captured(path: Path) -> str:
+def _captured(path: Path, health_path: Path | None = None) -> str:
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
     try:
-        show(path)
+        # Pass a nonexistent health path when not supplied so tests stay
+        # deterministic regardless of what exists on disk.
+        hp = health_path if health_path is not None else Path("C:/nonexistent/health.json")
+        show(path, source_health_path=hp)
     finally:
         sys.stdout = old
     return buf.getvalue()
@@ -221,3 +225,131 @@ class TestEdgeCases:
         p = tmp_path / "analysis.json"
         p.write_text("{}", encoding="utf-8")
         _captured(p)
+
+
+# ---------------------------------------------------------------------------
+# 5. Source Health section (AC-106)
+# ---------------------------------------------------------------------------
+
+def _health(status: str = "HEALTHY", blocking: bool = False,
+            reason_code: str = "ALL_SOURCES_FRESH",
+            fresh: int = 3, stale: int = 0, missing: int = 0,
+            affected: list | None = None) -> dict:
+    return {
+        "version":                   "source_health_review_v1",
+        "component":                 "build_source_health_review_lite",
+        "ts_utc":                    "2026-04-10T12:00:00Z",
+        "source_health_status":      status,
+        "markets_total":             fresh + stale + missing,
+        "markets_fresh":             fresh,
+        "markets_stale":             stale,
+        "markets_missing":           missing,
+        "freshness_blocking_review": blocking,
+        "primary_reason":            "test reason",
+        "primary_reason_code":       reason_code,
+        "affected_markets":          affected or [],
+        "sources":                   {"adapter_loaded": True, "md_loaded": True,
+                                      "md_refresh_ts": "2026-04-07T09:46:20Z"},
+        "flags": {"non_binding": True, "simulation_only": True,
+                  "paper_only": True, "live_activation_allowed": False},
+    }
+
+
+def _write_health(tmp_path, data: dict) -> Path:
+    p = tmp_path / "health.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def _analysis_path(tmp_path) -> Path:
+    p = tmp_path / "analysis.json"
+    p.write_text(json.dumps(_analysis()), encoding="utf-8")
+    return p
+
+
+class TestSourceHealth:
+    def test_missing_health_file_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        _captured(ap, health_path=tmp_path / "nonexistent.json")
+
+    def test_missing_health_file_shows_no_data(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        output = _captured(ap, health_path=tmp_path / "nonexistent.json")
+        assert "NO DATA" in output
+
+    def test_corrupt_health_file_no_crash(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        bad = tmp_path / "health.json"
+        bad.write_text("{ bad json {{{", encoding="utf-8")
+        _captured(ap, health_path=bad)
+
+    def test_corrupt_health_file_shows_error(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        bad = tmp_path / "health.json"
+        bad.write_text("garbage", encoding="utf-8")
+        output = _captured(ap, health_path=bad)
+        assert "ERROR" in output
+
+    def test_healthy_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health("HEALTHY", False, "ALL_SOURCES_FRESH",
+                                             fresh=3, stale=0, missing=0))
+        output = _captured(ap, health_path=hp)
+        assert "HEALTHY" in output
+
+    def test_critical_status_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health(
+            "CRITICAL", True, "ALL_SOURCES_STALE",
+            fresh=0, stale=6, missing=0,
+            affected=["ADA-EUR", "BTC-EUR", "ETH-EUR", "SOL-EUR", "BNB-EUR", "XRP-EUR"],
+        ))
+        output = _captured(ap, health_path=hp)
+        assert "CRITICAL" in output
+        assert "ALL_SOURCES_STALE" in output
+
+    def test_affected_markets_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health(
+            "DEGRADED", False, "MAJORITY_SOURCES_STALE",
+            fresh=2, stale=1, missing=0,
+            affected=["SOL-EUR"],
+        ))
+        output = _captured(ap, health_path=hp)
+        assert "SOL-EUR" in output
+
+    def test_blocking_review_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health("CRITICAL", True, "ALL_SOURCES_STALE",
+                                             fresh=0, stale=3, missing=0))
+        output = _captured(ap, health_path=hp)
+        assert "blocking_review" in output or "blocking" in output.lower()
+
+    def test_fresh_stale_miss_counts_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health("DEGRADED", False,
+                                             "MAJORITY_SOURCES_STALE",
+                                             fresh=2, stale=1, missing=0))
+        output = _captured(ap, health_path=hp)
+        # fresh/stale/miss line must contain the counts
+        assert "2" in output and "1" in output
+
+    def test_review_context_line_shown(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health("CRITICAL", True))
+        output = _captured(ap, health_path=hp)
+        assert "review context" in output
+
+    def test_review_context_contains_source_status(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health("CRITICAL", True))
+        output = _captured(ap, health_path=hp)
+        assert "SOURCE_CRITICAL" in output
+
+    def test_no_extra_files_written(self, tmp_path):
+        ap = _analysis_path(tmp_path)
+        hp = _write_health(tmp_path, _health())
+        before = set(f.name for f in tmp_path.iterdir())
+        _captured(ap, health_path=hp)
+        after  = set(f.name for f in tmp_path.iterdir())
+        assert before == after

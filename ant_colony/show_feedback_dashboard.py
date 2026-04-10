@@ -4,6 +4,9 @@ AC-UI-1: Feedback Dashboard (Read-Only CLI)
 Reads C:\\Trading\\ANT_OUT\\feedback_analysis.json and prints a compact
 human-readable overview. No file writes. No dependencies beyond stdlib.
 
+AC-106: also reads C:\\Trading\\ANT_OUT\\source_health_review.json to show
+source/data health context alongside review/anomaly signals.
+
 Usage:
     python ant_colony/show_feedback_dashboard.py
 """
@@ -11,7 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ANALYSIS_PATH = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
+ANALYSIS_PATH     = Path(r"C:\Trading\ANT_OUT\feedback_analysis.json")
+SOURCE_HEALTH_PATH = Path(r"C:\Trading\ANT_OUT\source_health_review.json")
 
 # ANSI colours (auto-disabled on systems that don't support them)
 try:
@@ -45,6 +49,14 @@ def _align_colour(alignment: str) -> str:
     return _red(alignment)
 
 
+def _health_colour(status: str) -> str:
+    if status == "HEALTHY":
+        return _green(status)
+    if status == "DEGRADED":
+        return _yellow(status)
+    return _red(status)
+
+
 def _attn_colour(needs: bool) -> str:
     return _red("YES") if needs else _green("NO")
 
@@ -53,7 +65,21 @@ def _pct(rate: float) -> str:
     return f"{rate * 100:.1f}%"
 
 
-def show(path: Path = ANALYSIS_PATH) -> None:
+def _load_source_health(path: Path) -> tuple[dict | None, str | None]:
+    """
+    Load source_health_review.json. Returns (data, None) on success,
+    (None, error_msg) on missing/corrupt.
+    """
+    if not path.exists():
+        return None, "NO DATA"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"ERROR: {exc}"
+
+
+def show(path: Path = ANALYSIS_PATH,
+         source_health_path: Path = SOURCE_HEALTH_PATH) -> None:
     """Print feedback dashboard from analysis JSON. Handles missing file."""
     # --- Load ---
     if not path.exists():
@@ -79,6 +105,9 @@ def show(path: Path = ANALYSIS_PATH) -> None:
     by_ac   = data.get("by_action_class", {})
     by_urg  = data.get("by_urgency", {})
     ts      = data.get("ts_utc", "unknown")
+
+    # --- Source health (AC-106) ---
+    sh_data, sh_err = _load_source_health(source_health_path)
 
     n_entries   = totals.get("entries",   0)
     n_confirm   = totals.get("confirm",   0)
@@ -121,6 +150,36 @@ def show(path: Path = ANALYSIS_PATH) -> None:
     print(f"  alignment      : {_align_colour(alignment)}")
     print(f"  needs_attention: {_attn_colour(needs_attn)}"
           + (f"  ({attn_code})" if needs_attn else ""))
+
+    # Combined review context line (AC-106)
+    if sh_data and isinstance(sh_data, dict):
+        sh_status = sh_data.get("source_health_status", "UNKNOWN")
+        _review_ctx = f"SOURCE_{sh_status} / REVIEW_{alignment}"
+    else:
+        _review_ctx = f"SOURCE_UNKNOWN / REVIEW_{alignment}"
+    print(f"  review context : {_cyan(_review_ctx)}")
+    print()
+
+    # --- Source Health (AC-106) ---
+    print(_bold("── Source Health ────────────────────────────────"))
+    if sh_err and sh_data is None:
+        print(f"  {sh_err}")
+    elif sh_data and isinstance(sh_data, dict):
+        sh_status   = sh_data.get("source_health_status", "?")
+        sh_blocking = sh_data.get("freshness_blocking_review", False)
+        sh_code     = sh_data.get("primary_reason_code", "?")
+        sh_fresh    = sh_data.get("markets_fresh",   0)
+        sh_stale    = sh_data.get("markets_stale",   0)
+        sh_miss     = sh_data.get("markets_missing", 0)
+        sh_affected = sh_data.get("affected_markets", [])
+        print(f"  status          : {_health_colour(sh_status)}")
+        print(f"  blocking_review : {_red('True') if sh_blocking else _green('False')}")
+        print(f"  reason_code     : {sh_code}")
+        print(f"  fresh/stale/miss: {sh_fresh} / {sh_stale} / {sh_miss}")
+        if sh_affected:
+            print(f"  affected_markets: {', '.join(sh_affected)}")
+    else:
+        print("  (no data)")
     print()
 
     # --- By action class ---
