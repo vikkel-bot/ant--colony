@@ -82,3 +82,8 @@ backup/
 !package-lock.json
 # AC-67 policy abstraction — static policy files are source-controlled
 !ant_colony/policy/*.json
+
+# AC-122 research data — not source-controlled
+data/ohlcv/*.sqlite
+data/ohlcv/*.sqlite-wal
+data/ohlcv/*.sqlite-shm
