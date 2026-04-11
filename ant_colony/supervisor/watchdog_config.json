@@ -1,0 +1,10 @@
+{
+  "check_interval_seconds": 60,
+  "stale_threshold_seconds": 300,
+  "alert_cooldown_seconds": 600,
+  "markets": ["ADA-EUR", "BNB-EUR", "BTC-EUR", "ETH-EUR", "SOL-EUR", "XRP-EUR"],
+  "snapshot_base_path": "C:\\Trading\\EDGE3\\ant_colony\\workers",
+  "telegram_enabled": true,
+  "telegram_bot_token": "PUT_YOUR_TOKEN_HERE",
+  "telegram_chat_id": "PUT_YOUR_CHAT_ID_HERE"
+}
