@@ -481,8 +481,191 @@ class BitvavoAdapter(BrokerAdapter):
         return result
 
     def place_order(self, order_request: Dict[str, Any]) -> Dict[str, Any]:
-        market = str(order_request.get("market")) if isinstance(order_request, dict) else None
-        return self._not_implemented("place_order", market=market)
+        operation = "place_order"
+        t0 = time.perf_counter()
+
+        if not isinstance(order_request, dict):
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return self._result_error(
+                operation=operation,
+                error_type="INVALID_REQUEST",
+                code="INVALID_ORDER_REQUEST",
+                message="order_request must be a dict",
+                retryable=False,
+                latency_ms=latency_ms,
+                attempts=0,
+            )
+
+        market = order_request.get("market")
+        side = order_request.get("side")
+        order_type = order_request.get("order_type")
+        qty = order_request.get("qty")
+
+        missing = [f for f, v in [("market", market), ("side", side), ("order_type", order_type), ("qty", qty)] if not v and v != 0]
+        if missing:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            result = self._result_error(
+                operation=operation,
+                error_type="INVALID_REQUEST",
+                code="MISSING_ORDER_FIELDS",
+                message=f"missing required order fields: {missing}",
+                retryable=False,
+                latency_ms=latency_ms,
+                attempts=0,
+            )
+            self._write_ops_log(
+                operation=operation,
+                market=market,
+                ok=False,
+                latency_ms=latency_ms,
+                attempts=0,
+                error_type="INVALID_REQUEST",
+            )
+            return result
+
+        body: Dict[str, Any] = {"amount": str(float(qty))}
+        if order_type == "limit":
+            intended_price = order_request.get("intended_entry_price")
+            if intended_price is None:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                result = self._result_error(
+                    operation=operation,
+                    error_type="INVALID_REQUEST",
+                    code="MISSING_LIMIT_PRICE",
+                    message="intended_entry_price required for limit orders",
+                    retryable=False,
+                    latency_ms=latency_ms,
+                    attempts=0,
+                )
+                self._write_ops_log(
+                    operation=operation,
+                    market=market,
+                    ok=False,
+                    latency_ms=latency_ms,
+                    attempts=0,
+                    error_type="INVALID_REQUEST",
+                )
+                return result
+            body["price"] = str(float(intended_price))
+
+        client_request_id = order_request.get("client_request_id")
+        if client_request_id:
+            body["clientOrderId"] = str(client_request_id)
+
+        try:
+            self._import_client()
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            result = self._result_error(
+                operation=operation,
+                error_type="UNKNOWN_ERROR",
+                code="BITVAVO_IMPORT_FAILED",
+                message="Failed to import python_bitvavo_api.bitvavo.Bitvavo",
+                retryable=False,
+                latency_ms=latency_ms,
+                attempts=0,
+                raw_error=str(exc),
+            )
+            self._write_ops_log(
+                operation=operation,
+                market=market,
+                ok=False,
+                latency_ms=latency_ms,
+                attempts=0,
+                error_type="UNKNOWN_ERROR",
+            )
+            return result
+
+        attempts = 0
+        last_error: Optional[str] = None
+
+        for attempt in range(1, self.max_retries + 1):
+            attempts = attempt
+            try:
+                self._rate_limit()
+                client = self._make_client()
+                raw = client.placeOrder(market, side, order_type, body)
+
+                if isinstance(raw, dict) and raw.get("errorCode") is not None:
+                    error_code = str(raw.get("errorCode"))
+                    error_msg = str(raw.get("error", "Bitvavo returned an error"))
+                    retryable = error_code in {"105", "429", "500", "502", "503", "504"}
+                    error_type = "RATE_LIMITED" if error_code == "429" else "BROKER_REJECTED"
+
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    result = self._result_error(
+                        operation=operation,
+                        error_type=error_type,
+                        code=error_code,
+                        message=error_msg,
+                        retryable=retryable,
+                        latency_ms=latency_ms,
+                        attempts=attempts,
+                        raw_error=raw,
+                    )
+                    self._write_ops_log(
+                        operation=operation,
+                        market=market,
+                        ok=False,
+                        latency_ms=latency_ms,
+                        attempts=attempts,
+                        error_type=error_type,
+                    )
+                    return result
+
+                order_id = str(raw.get("orderId", "")) if isinstance(raw, dict) else ""
+                status = str(raw.get("status", "")) if isinstance(raw, dict) else ""
+
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                result = self._result_ok(
+                    operation=operation,
+                    data={
+                        "market": market,
+                        "order_id": order_id,
+                        "status": status,
+                        "side": side,
+                        "order_type": order_type,
+                        "qty": qty,
+                        "raw": raw if isinstance(raw, dict) else {},
+                    },
+                    latency_ms=latency_ms,
+                    attempts=attempts,
+                )
+                self._write_ops_log(
+                    operation=operation,
+                    market=market,
+                    ok=True,
+                    latency_ms=latency_ms,
+                    attempts=attempts,
+                    error_type=None,
+                )
+                return result
+
+            except Exception as exc:
+                last_error = str(exc)
+                if attempt < self.max_retries:
+                    time.sleep(attempt)
+
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        result = self._result_error(
+            operation=operation,
+            error_type="NETWORK_ERROR",
+            code="BITVAVO_PLACE_ORDER_FAILED",
+            message="Bitvavo place_order failed after retries",
+            retryable=True,
+            latency_ms=latency_ms,
+            attempts=attempts,
+            raw_error=last_error,
+        )
+        self._write_ops_log(
+            operation=operation,
+            market=market,
+            ok=False,
+            latency_ms=latency_ms,
+            attempts=attempts,
+            error_type="NETWORK_ERROR",
+        )
+        return result
 
     def cancel_order(self, broker_order_id: str, market: Optional[str] = None) -> Dict[str, Any]:
         return self._not_implemented("cancel_order", market=market)
