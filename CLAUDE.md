@@ -168,3 +168,37 @@ git push origin main
 - Push immediately after commit — do not batch multiple ACs into one push
 - If a push fails, resolve before starting the next AC step
 - Local-only state is considered unfinished work
+
+---
+
+## Operator primacy (permanent rule)
+
+**The queen works for Vik, not the other way around.**
+
+The system must remain understandable to the operator as it grows. Complexity that the operator cannot follow is a safety risk, not a feature.
+
+### Explainability requirement
+
+Every new module must be explainable to Vik in one sentence:
+- what it does
+- why it exists
+
+If a module cannot be explained in one sentence, it must not be built in this phase. Explainability is a safety requirement, not just a communication preference.
+
+### Practical rule — per AC step
+
+Every future AC step must include:
+- **One sentence: what the module does**
+- **One sentence: why it exists**
+
+These two sentences are part of the definition of done, alongside tests and a passing regression suite.
+
+### Validation rule
+
+If the architect cannot explain a module in one sentence, the module is too complex for this phase and must be rejected or split into smaller, independently explainable parts.
+
+### The test
+
+> *"Can Vik understand what this module does and why it exists in the time it takes to read one sentence?"*
+
+If the answer is no, do not build it yet.
