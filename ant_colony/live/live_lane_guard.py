@@ -51,9 +51,10 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if config.get("max_positions") != 1:
         return _block("max_positions must be 1")
 
-    # hard isolation flags — all must be false
-    if config.get("allow_broker_execution") is not False:
-        return _block("allow_broker_execution must be false")
+    # allow_broker_execution must be bool (true/false decided by live execution gate)
+    if not isinstance(config.get("allow_broker_execution"), bool):
+        return _block("allow_broker_execution must be bool")
+    # hard isolation flags — must be false (live execution gate owns broker_execution)
     if config.get("allow_shared_state") is not False:
         return _block("allow_shared_state must be false")
     if config.get("allow_paper_inputs") is not False:

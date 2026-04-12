@@ -41,6 +41,7 @@ from ant_colony.live.live_lane_runner import run
 _LANE_CFG_ENABLED = {
     "lane": "live_test",
     "enabled": True,
+    "live_enabled": False,
     "market": "BNB-EUR",
     "strategy": "EDGE3",
     "max_notional_eur": 50,
@@ -274,33 +275,37 @@ class TestRunnerMacroFreezeBlocks:
 # ---------------------------------------------------------------------------
 
 class TestRunnerReady:
-    def test_runner_ready_normal(self):
+    # AC-153: READY replaced by LIVE_GATE_READY. With live_enabled=False (safe
+    # default in _LANE_CFG_ENABLED), runner correctly blocks at gate 4 with
+    # LIVE_DISABLED. Macro guard is still exercised before gate 4.
+    def test_runner_live_disabled_after_macro_ok(self):
         result = run(
             config=dict(_LANE_CFG_ENABLED),
             macro_config=_macro(),
         )
-        assert result["state"] == "READY"
+        assert result["state"] == "BLOCKED"
+        assert "LIVE_DISABLED" in result["reason"]
 
-    def test_runner_ready_has_risk_state(self):
+    def test_runner_live_disabled_has_risk_state(self):
         result = run(
             config=dict(_LANE_CFG_ENABLED),
             macro_config=_macro(),
         )
         assert result["risk_state"] == "NORMAL"
 
-    def test_runner_ready_broker_execution_false(self):
+    def test_runner_broker_execution_false(self):
         result = run(
             config=dict(_LANE_CFG_ENABLED),
             macro_config=_macro(),
         )
         assert result["allow_broker_execution"] is False
 
-    def test_runner_ready_caution_no_freeze(self):
+    def test_runner_caution_no_freeze_live_disabled(self):
         result = run(
             config=dict(_LANE_CFG_ENABLED),
             macro_config=_macro(risk_state="CAUTION"),
         )
-        assert result["state"] == "READY"
+        assert result["state"] == "BLOCKED"
         assert result["risk_state"] == "CAUTION"
 
 
@@ -327,7 +332,7 @@ class TestLaneGuardTakesPrecedence:
             macro_config=_macro(),
         )
         assert result["state"] == "BLOCKED"
-        assert "disabled" in result["reason"]
+        assert "LANE_DISABLED" in result["reason"] or "disabled" in result["reason"].lower()
 
 
 # ---------------------------------------------------------------------------

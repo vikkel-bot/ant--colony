@@ -41,6 +41,7 @@ from ant_colony.live.live_lane_runner import load_config, run
 _VALID_CONFIG = {
     "lane": "live_test",
     "enabled": False,
+    "live_enabled": False,
     "market": "BNB-EUR",
     "strategy": "EDGE3",
     "max_notional_eur": 50,
@@ -75,20 +76,24 @@ class TestDisabledLane:
 
 
 # ---------------------------------------------------------------------------
-# B. Valid config, enabled=true → READY
+# B. Valid config, enabled=true, live_enabled=false → BLOCKED (LIVE_DISABLED)
+#    AC-153 replaced the old READY state with LIVE_GATE_READY.
+#    With live_enabled=false (safe default), runner correctly blocks here.
 # ---------------------------------------------------------------------------
 
 class TestEnabledLane:
-    def test_enabled_returns_ready(self):
-        result = run(_cfg(enabled=True))
-        assert result["state"] == "READY"
+    def test_enabled_live_disabled_returns_blocked(self):
+        result = run(_cfg(enabled=True, live_enabled=False))
+        assert result["state"] == "BLOCKED"
         assert result["allow_broker_execution"] is False
-        assert result["note"] == "isolated lane only; no execution"
 
-    def test_ready_has_required_keys(self):
-        result = run(_cfg(enabled=True))
-        for key in ("component", "lane", "state", "market", "strategy",
-                    "allow_broker_execution", "note"):
+    def test_blocked_live_disabled_reason(self):
+        result = run(_cfg(enabled=True, live_enabled=False))
+        assert "LIVE_DISABLED" in result["reason"]
+
+    def test_blocked_has_required_keys(self):
+        result = run(_cfg(enabled=True, live_enabled=False))
+        for key in ("component", "lane", "state", "reason", "market", "strategy"):
             assert key in result, f"missing key: {key}"
 
 
@@ -115,14 +120,27 @@ class TestPaperInputsBlocked:
 
 
 # ---------------------------------------------------------------------------
-# E. allow_broker_execution=true → blocked
+# E. allow_broker_execution must be bool (AC-153: true/false decided by live gate)
 # ---------------------------------------------------------------------------
 
-class TestBrokerExecutionBlocked:
-    def test_broker_execution_true_blocked(self):
+class TestBrokerExecutionField:
+    def test_broker_execution_false_allowed(self):
+        g = validate(_cfg(allow_broker_execution=False))
+        assert g["allow"] is True
+
+    def test_broker_execution_true_allowed_at_guard_level(self):
+        # AC-153: guard validates type only; live_execution_gate owns the value rule
         g = validate(_cfg(allow_broker_execution=True))
+        assert g["allow"] is True
+
+    def test_broker_execution_non_bool_blocked(self):
+        g = validate(_cfg(allow_broker_execution=None))
         assert g["allow"] is False
         assert "allow_broker_execution" in g["reason"]
+
+    def test_broker_execution_string_blocked(self):
+        g = validate(_cfg(allow_broker_execution="false"))
+        assert g["allow"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +194,12 @@ class TestRunnerOutput:
         loaded = json.loads(dumped)
         assert loaded["state"] == "BLOCKED"
 
-    def test_ready_output_json_serialisable(self):
-        result = run(_cfg(enabled=True))
+    def test_live_disabled_output_json_serialisable(self):
+        result = run(_cfg(enabled=True, live_enabled=False))
         dumped = json.dumps(result)
         loaded = json.loads(dumped)
-        assert loaded["state"] == "READY"
+        assert loaded["state"] == "BLOCKED"
+        assert "LIVE_DISABLED" in loaded["reason"]
 
     def test_blocked_required_keys(self):
         result = run(_cfg(enabled=False))

@@ -1,6 +1,7 @@
 {
   "lane": "live_test",
   "enabled": false,
+  "live_enabled": false,
   "market": "BNB-EUR",
   "strategy": "EDGE3",
   "max_notional_eur": 50,
