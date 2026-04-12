@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "market": "BNB-EUR",
+  "max_single_move_pct": 8.0,
+  "max_abs_move_pct": 12.0,
+  "stale_market_data_seconds": 180,
+  "freeze_on_market_data_missing": true
+}
