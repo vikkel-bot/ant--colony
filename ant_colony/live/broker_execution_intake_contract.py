@@ -172,9 +172,15 @@ def _validate(record: Any) -> dict[str, Any]:
             or max_notional <= 0 or max_notional > 50:
         return _fail(f"max_notional_eur must be numeric > 0 and <= 50, got {max_notional!r}")
 
-    # --- allow_broker_execution must be false ---
-    if record["allow_broker_execution"] is not False:
-        return _fail("allow_broker_execution must be false; broker execution is not enabled")
+    # --- allow_broker_execution must be bool ---
+    # False  → dry intake (no broker call)
+    # True   → live-capable shape; final execution permission is granted by
+    #           evaluate_controlled_live_intake() (AC-162), not here.
+    if not isinstance(record["allow_broker_execution"], bool):
+        return _fail(
+            f"allow_broker_execution must be bool, "
+            f"got {type(record['allow_broker_execution']).__name__}"
+        )
 
     # --- risk_state ---
     risk_state = record["risk_state"]

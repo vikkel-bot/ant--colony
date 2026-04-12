@@ -1,23 +1,21 @@
 """
-AC-154: Bitvavo Live Executor
+AC-154 / AC-162: Bitvavo Live Executor
 
-Executes one live entry order through the complete A-to-I gate chain and,
-if all gates pass, places a real order on Bitvavo and returns an AC-148-
-compatible entry execution record.
+Executes one live entry order through the complete gate chain and, if all
+gates pass, places a real order on Bitvavo and returns an AC-148-compatible
+entry execution record.
 
-One sentence: Runs the complete A-I gate chain and, when every gate is open,
+One sentence: Runs the complete gate chain and, when every gate is open,
 places a real order on Bitvavo and returns a validated AC-148 entry record.
 
 Gate order (mandatory):
-  A. Intake validation (AC-150)
-  B. Broker request builder (AC-151)
-  C. Adapter bridge (AC-152)
-  D. Live execution gate (AC-153)
-  E. Manual macro freeze explicit check (AC-147, defense-in-depth)
-  F. Auto-freeze check (AC-155)
-  G. Real broker call (BitvavoAdapter.place_order)
-  H. Order reconciliation (AC-154 reconciler)
-  I. AC-148 schema validation
+  A.  Intake shape validation (AC-150)
+  A'. Controlled live intake gate (AC-162) — all live conditions must be true
+  B.  Broker request builder (AC-151)
+  C.  Adapter bridge (AC-152)
+  G.  Real broker call (BitvavoAdapter.place_order)
+  H.  Order reconciliation
+  I.  AC-148 schema validation
 
 Fail-closed: any gate failure stops execution and returns ok=False.
 No paper pipeline imports. No file IO beyond the adapter ops log.
@@ -30,7 +28,7 @@ from typing import Any
 from ant_colony.live.broker_execution_intake_contract import validate_broker_execution_intake
 from ant_colony.live.broker_request_builder import build_broker_request
 from ant_colony.live.broker_adapter_bridge import build_broker_adapter_command
-from ant_colony.live.live_execution_gate import evaluate_live_execution_gate
+from ant_colony.live.controlled_live_intake_gate import evaluate_controlled_live_intake
 from ant_colony.live.live_order_reconciler import reconcile_live_order
 from ant_colony.live.live_execution_result_schema import validate_live_execution_result
 
@@ -87,10 +85,18 @@ def _execute(
     auto_freeze_result: Any,
     adapter: Any,
 ) -> dict[str, Any]:
-    # --- Gate A: intake validation (AC-150) ---
+    # --- Gate A: intake shape validation (AC-150) ---
     intake_result = validate_broker_execution_intake(intake_record)
     if not intake_result["ok"]:
         return _fail(f"INTAKE_INVALID: {intake_result['reason']}", "A_INTAKE")
+
+    # --- Gate A': controlled live intake (AC-162) ---
+    # All live conditions must be simultaneously true before broker call.
+    live_gate = evaluate_controlled_live_intake(
+        intake_record, live_lane_config, macro_freeze_config, auto_freeze_result
+    )
+    if not live_gate["allow"]:
+        return _fail(f"CONTROLLED_LIVE_GATE_BLOCKED: {live_gate['reason']}", "A_CONTROLLED_LIVE")
 
     # --- Gate B: broker request builder (AC-151) ---
     req_result = build_broker_request(intake_record)
@@ -101,26 +107,6 @@ def _execute(
     cmd_result = build_broker_adapter_command(intake_record)
     if not cmd_result["ok"]:
         return _fail(f"ADAPTER_BRIDGE_FAILED: {cmd_result['reason']}", "C_ADAPTER_BRIDGE")
-
-    # --- Gate D: live execution gate (AC-153) ---
-    gate_result = evaluate_live_execution_gate(live_lane_config, macro_freeze_config, intake_record)
-    if not gate_result["allow"]:
-        return _fail(f"LIVE_GATE_BLOCKED: {gate_result['reason']}", "D_LIVE_GATE")
-
-    # --- Gate E: explicit macro freeze check (AC-147, defense-in-depth) ---
-    if not isinstance(macro_freeze_config, dict):
-        return _fail("MACRO_CONFIG_INVALID: must be a dict", "E_MACRO_FREEZE")
-    if macro_freeze_config.get("risk_state") == "FREEZE":
-        return _fail("MACRO_FREEZE_ACTIVE: risk_state is FREEZE", "E_MACRO_FREEZE")
-    if macro_freeze_config.get("freeze_new_entries") is True:
-        return _fail("MACRO_FREEZE_ACTIVE: freeze_new_entries is true", "E_MACRO_FREEZE")
-
-    # --- Gate F: auto-freeze check (AC-155) ---
-    if not isinstance(auto_freeze_result, dict):
-        return _fail("AUTO_FREEZE_RESULT_INVALID: must be a dict", "F_AUTO_FREEZE")
-    if not auto_freeze_result.get("allow"):
-        reason = auto_freeze_result.get("reason", "UNKNOWN")
-        return _fail(f"AUTO_FREEZE_ACTIVE: {reason}", "F_AUTO_FREEZE")
 
     # --- Gate G: real broker call ---
     adapter_command = cmd_result["adapter_command"]

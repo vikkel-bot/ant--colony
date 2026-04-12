@@ -355,14 +355,21 @@ class TestFreezeNewEntries:
 
 
 # ---------------------------------------------------------------------------
-# Q. allow_broker_execution == true
+# Q. allow_broker_execution — bool required; True = live-capable shape (AC-162)
 # ---------------------------------------------------------------------------
 
-class TestBrokerExecutionBlocked:
-    def test_allow_broker_execution_true_blocked(self):
+class TestBrokerExecutionBool:
+    def test_allow_broker_execution_true_live_capable_shape(self):
+        # AC-162: True is now a valid shape for live-capable intake.
+        # Final live permission is granted by evaluate_controlled_live_intake().
         result = validate_broker_execution_intake(_rec(allow_broker_execution=True))
-        assert result["ok"] is False
-        assert "allow_broker_execution" in result["reason"]
+        assert result["ok"] is True
+        assert result["normalized_record"]["allow_broker_execution"] is True
+
+    def test_allow_broker_execution_false_dry_mode(self):
+        result = validate_broker_execution_intake(_rec(allow_broker_execution=False))
+        assert result["ok"] is True
+        assert result["normalized_record"]["allow_broker_execution"] is False
 
     def test_allow_broker_execution_string_blocked(self):
         result = validate_broker_execution_intake(_rec(allow_broker_execution="false"))

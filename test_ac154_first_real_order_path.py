@@ -1,15 +1,15 @@
 """
-AC-154: Tests for the First Real Order Path
+AC-154 / AC-162: Tests for the First Real Order Path
 
 Verifies:
   A. Full gate chain passes with mocked adapter → ok=True, AC-148 result
-  B. Gate A blocks on invalid intake
+  B. Gate A blocks on invalid intake shape
   C. Gate B blocks on request builder failure
-  D. Gate D blocks when live_enabled=False
-  E. Gate D blocks when allow_broker_execution=False
-  F. Gate E blocks on MACRO_FREEZE risk_state
-  G. Gate E blocks on freeze_new_entries=True
-  H. Gate F blocks when auto_freeze_result.allow=False
+  D. Gate A' (controlled live intake) blocks when live_enabled=False
+  E. Gate A' blocks when allow_broker_execution=False in lane config
+  F. Gate A' blocks on MACRO_FREEZE risk_state
+  G. Gate A' blocks on freeze_new_entries=True
+  H. Gate A' blocks when auto_freeze_result.allow=False
   I. Gate G blocks when broker adapter returns error
   J. Gate H blocks on reconcile failure (bad broker response)
   K. Output shape is correct (ok, reason, gate, execution_result)
@@ -56,7 +56,7 @@ _LIVE_INTAKE = {
     "intended_entry_price": 600.0,
     "order_type": "market",
     "max_notional_eur": 50.0,
-    "allow_broker_execution": False,   # AC-150 contract: always False in intake
+    "allow_broker_execution": True,    # AC-162: live-capable intake
     "risk_state": "NORMAL",
     "freeze_new_entries": False,
     "operator_approved": True,
@@ -228,82 +228,75 @@ class TestGateBC:
 
 
 # ---------------------------------------------------------------------------
-# D. Gate D: live_enabled=False blocks
+# D. Gate A': controlled live intake blocks when live_enabled=False
 # ---------------------------------------------------------------------------
 
 class TestGateD:
-    def test_live_disabled_blocked_at_d(self):
+    def test_live_disabled_blocked_at_controlled(self):
         result = _exec(lane={"live_enabled": False})
         assert result["ok"] is False
-        assert result["gate"] == "D_LIVE_GATE"
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
-    def test_allow_broker_execution_false_blocked_at_d(self):
+    def test_allow_broker_execution_false_in_lane_blocked(self):
         result = _exec(lane={"allow_broker_execution": False})
         assert result["ok"] is False
-        assert result["gate"] == "D_LIVE_GATE"
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
-    def test_lane_disabled_blocked_at_d(self):
+    def test_lane_disabled_blocked_at_controlled(self):
         result = _exec(lane={"enabled": False})
         assert result["ok"] is False
-        assert result["gate"] == "D_LIVE_GATE"
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
-    def test_d_reason_mentions_gate(self):
+    def test_controlled_reason_propagated(self):
         result = _exec(lane={"live_enabled": False})
-        assert "LIVE_GATE_BLOCKED" in result["reason"] or "LIVE_DISABLED" in result["reason"]
+        assert "CONTROLLED_LIVE_GATE_BLOCKED" in result["reason"]
 
 
 # ---------------------------------------------------------------------------
-# E. Gate E: macro freeze blocks (defense-in-depth)
+# E/F. Gate A': macro freeze blocks
 # ---------------------------------------------------------------------------
 
 class TestGateE:
-    def test_macro_freeze_risk_state_blocked_at_e(self):
-        # Gate D also checks macro — but E provides defense-in-depth
-        # Here we simulate D passing but E catching (use a minimal macro that
-        # D accepts with CAUTION + no freeze, but then manually inject FREEZE).
-        # In practice, D would already block FREEZE. Test using CAUTION+freeze_entries.
+    def test_macro_freeze_risk_state_blocked(self):
         result = _exec(macro={"risk_state": "CAUTION", "freeze_new_entries": True, "reason": "", "updated_ts_utc": ""})
         assert result["ok"] is False
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
     def test_macro_freeze_entries_true_blocked(self):
         result = _exec(macro={"risk_state": "NORMAL", "freeze_new_entries": True, "reason": "", "updated_ts_utc": ""})
         assert result["ok"] is False
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
-    def test_non_dict_macro_blocked_at_e_or_d(self):
+    def test_non_dict_macro_blocked(self):
         result = execute_first_live_order(_LIVE_INTAKE, _LIVE_LANE_CFG, None, _AUTO_FREEZE_CLEAR, _adapter=_MockAdapterOk())
         assert result["ok"] is False
 
 
-# ---------------------------------------------------------------------------
-# F. Gate E: FREEZE risk_state stops at E
-# ---------------------------------------------------------------------------
-
 class TestGateEFreeze:
     def test_freeze_state_blocked(self):
-        # Gate D would block this too; verify the result is blocked
         result = _exec(macro={"risk_state": "FREEZE", "freeze_new_entries": False, "reason": "", "updated_ts_utc": ""})
         assert result["ok"] is False
-        assert result["gate"] in ("D_LIVE_GATE", "E_MACRO_FREEZE")
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
 
 # ---------------------------------------------------------------------------
-# G/H. Gate F: auto-freeze blocks
+# H. Gate A': auto-freeze blocks
 # ---------------------------------------------------------------------------
 
 class TestGateF:
-    def test_auto_freeze_active_blocked_at_f(self):
+    def test_auto_freeze_active_blocked(self):
         result = _exec(auto_freeze={"allow": False, "reason": "extreme single move: abs(9.00%) >= 8.0%", "risk_state": "FREEZE", "freeze_new_entries": True})
         assert result["ok"] is False
-        assert result["gate"] == "F_AUTO_FREEZE"
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
     def test_auto_freeze_reason_propagated(self):
         result = _exec(auto_freeze={"allow": False, "reason": "market data stale: 200s > 180s", "risk_state": "FREEZE", "freeze_new_entries": True})
         assert "market data stale" in result["reason"]
 
-    def test_non_dict_auto_freeze_blocked_at_f(self):
+    def test_non_dict_auto_freeze_blocked(self):
         result = execute_first_live_order(_LIVE_INTAKE, _LIVE_LANE_CFG, _MACRO_NORMAL, None, _adapter=_MockAdapterOk())
         assert result["ok"] is False
-        assert result["gate"] == "F_AUTO_FREEZE"
+        assert result["gate"] == "A_CONTROLLED_LIVE"
 
 
 # ---------------------------------------------------------------------------
@@ -704,10 +697,10 @@ class TestExecutorRequiredKeys:
     def test_blocked_at_a_has_all_keys(self):
         self._check(_exec(intake={"market": "WRONG"}))
 
-    def test_blocked_at_d_has_all_keys(self):
+    def test_blocked_at_controlled_live_has_all_keys(self):
         self._check(_exec(lane={"live_enabled": False}))
 
-    def test_blocked_at_f_has_all_keys(self):
+    def test_blocked_at_auto_freeze_has_all_keys(self):
         self._check(_exec(auto_freeze={"allow": False, "reason": "stale", "risk_state": "FREEZE", "freeze_new_entries": True}))
 
     def test_blocked_at_g_has_all_keys(self):
