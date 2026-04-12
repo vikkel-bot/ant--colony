@@ -202,3 +202,36 @@ If the architect cannot explain a module in one sentence, the module is too comp
 > *"Can Vik understand what this module does and why it exists in the time it takes to read one sentence?"*
 
 If the answer is no, do not build it yet.
+
+---
+
+## Colony governance constitution (permanent rule)
+
+These five rules are the governing structure of the system. They apply to every build decision, every module boundary, and every reporting path. They are not guidelines — they are constraints.
+
+1. **Vik controls the colony.**
+2. **Queen controls the ants.**
+3. **Ants report to the Queen.**
+4. **Queen reports anomalies to Vik.**
+5. **Vik never reviews individual trades.**
+
+### Architectural consequences
+
+- No module should surface individual trade details directly to Vik. Aggregation and anomaly detection are the Queen's job.
+- No ant should communicate directly with Vik. Ants produce results; the Queen interprets them.
+- Feedback from ants to the Queen must be **causally rich**, not just descriptive. The Queen needs to understand *why* a trade worked or failed — not just *that* it did. A feedback record without market regime, signal context, and execution quality is incomplete. The Queen cannot learn from incomplete records.
+- Anomaly reporting (watchdog, freeze alerts, mismatch detection) flows Queen → Vik. Routine outcomes do not.
+
+### Feedback schema requirement (binding)
+
+Every closed trade feedback record **must** include causal context alongside the trade outcome. Descriptive-only records (PnL + exit_reason) are insufficient for queen-level learning.
+
+Required causal fields in every feedback record:
+- `market_regime_at_entry` — what regime was the market in when the ant entered?
+- `volatility_at_entry` — was the market calm or volatile at entry?
+- `signal_strength` — how strong was the entry signal?
+- `signal_key` — which specific signal triggered the entry?
+- `slippage_vs_expected_eur` — how did actual execution deviate from expected?
+- `entry_latency_ms` — how fast was the signal-to-fill path?
+
+A feedback record without these six fields must be rejected by the schema validator.
