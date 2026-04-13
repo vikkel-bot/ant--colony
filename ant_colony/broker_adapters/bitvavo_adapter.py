@@ -680,7 +680,7 @@ class BitvavoAdapter(BrokerAdapter):
             operation=operation,
             error_type="NETWORK_ERROR",
             code="BITVAVO_PLACE_ORDER_FAILED",
-            message="Bitvavo place_order failed after retries",
+            message=f"Bitvavo place_order failed after {attempts} attempt(s): {last_error}",
             retryable=True,
             latency_ms=latency_ms,
             attempts=attempts,
