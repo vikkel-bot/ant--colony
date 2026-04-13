@@ -63,8 +63,62 @@ def execute_first_live_order(
     Never raises. Fail-closed on any gate failure or unexpected error.
     """
     try:
-        return _execute(
+        result = _execute(
             intake_record, live_lane_config, macro_freeze_config, auto_freeze_result, _adapter
+        )
+        result.pop("_broker_response", None)  # strip internal key; not part of public API
+        return result
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reason": f"unexpected executor error: {exc}",
+            "gate": "EXECUTOR",
+            "execution_result": None,
+        }
+
+
+def execute_and_persist_live_order(
+    intake_record: Any,
+    live_lane_config: Any,
+    macro_freeze_config: Any,
+    auto_freeze_result: Any,
+    *,
+    _adapter: Any = None,
+    _writer: Any = None,
+) -> dict[str, Any]:
+    """
+    Execute one live entry order and persist artifacts to disk (AC-167).
+
+    Identical gate chain to execute_first_live_order (A → I), then writes:
+        {base_output_dir}/{lane}/execution/{trade_id}.json
+        {base_output_dir}/{lane}/broker/{trade_id}.json
+
+    Parameters:
+        intake_record       — AC-150 validated intake dict
+        live_lane_config    — lane config; must contain "base_output_dir"
+        macro_freeze_config — AC-147 macro freeze config
+        auto_freeze_result  — pre-evaluated AC-155 result dict
+        _adapter            — injectable broker adapter (BitvavoAdapter by default)
+        _writer             — injectable artifact writer for tests; defaults to
+                              live_artifact_writer.write_entry_artifacts
+
+    Returns:
+        {
+            "ok": bool,
+            "reason": str,
+            "gate": str,
+            "execution_result": dict | None,
+            "artifacts": {"execution": str, "broker": str}  # only when ok=True and base_output_dir set
+        }
+
+    Fail-closed: if persistence fails, ok=False, gate="J_PERSIST", execution_result preserved.
+    If base_output_dir is absent from live_lane_config, execution succeeds without persisting.
+    Never raises.
+    """
+    try:
+        return _execute_and_persist(
+            intake_record, live_lane_config, macro_freeze_config, auto_freeze_result,
+            _adapter, _writer
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -77,6 +131,52 @@ def execute_first_live_order(
 
 def _fail(reason: str, gate: str) -> dict[str, Any]:
     return {"ok": False, "reason": reason, "gate": gate, "execution_result": None}
+
+
+def _execute_and_persist(
+    intake_record: Any,
+    live_lane_config: Any,
+    macro_freeze_config: Any,
+    auto_freeze_result: Any,
+    adapter: Any,
+    writer: Any,
+) -> dict[str, Any]:
+    inner = _execute(
+        intake_record, live_lane_config, macro_freeze_config, auto_freeze_result, adapter
+    )
+    broker_response = inner.pop("_broker_response", None)
+
+    if not inner["ok"]:
+        return inner
+
+    base_output_dir = (
+        live_lane_config.get("base_output_dir")
+        if isinstance(live_lane_config, dict)
+        else None
+    )
+    if not base_output_dir:
+        return inner  # no output dir configured — not a failure
+
+    lane = (
+        (intake_record.get("lane") if isinstance(intake_record, dict) else None)
+        or (live_lane_config.get("lane") if isinstance(live_lane_config, dict) else None)
+        or "live"
+    )
+
+    if writer is None:
+        from ant_colony.live.live_artifact_writer import write_entry_artifacts as writer  # type: ignore[assignment]
+
+    write_result = writer(base_output_dir, lane, inner["execution_result"], broker_response or {})
+
+    if not write_result["ok"]:
+        return {
+            "ok": False,
+            "reason": f"ORDER_EXECUTED_PERSISTENCE_FAILED: {write_result['reason']}",
+            "gate": "J_PERSIST",
+            "execution_result": inner["execution_result"],
+        }
+
+    return {**inner, "artifacts": write_result["paths"]}
 
 
 def _execute(
@@ -156,4 +256,5 @@ def _execute(
         "reason": "ORDER_EXECUTED",
         "gate": "I_SCHEMA",
         "execution_result": schema_result["normalized_record"],
+        "_broker_response": broker_response,  # consumed by _execute_and_persist; stripped by execute_first_live_order
     }
