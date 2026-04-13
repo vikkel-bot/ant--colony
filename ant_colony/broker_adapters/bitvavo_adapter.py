@@ -44,6 +44,7 @@ class BitvavoAdapter(BrokerAdapter):
         *,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
+        operator_id: Optional[str] = None,
         rest_url: str = "https://api.bitvavo.com/v2",
         timeout_connect_s: int = 5,
         timeout_read_s: int = 20,
@@ -53,6 +54,7 @@ class BitvavoAdapter(BrokerAdapter):
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("BITVAVO_API_KEY")
         self.api_secret = api_secret if api_secret is not None else os.getenv("BITVAVO_API_SECRET")
+        self.operator_id = operator_id if operator_id is not None else os.getenv("BITVAVO_OPERATOR_ID")
         self.rest_url = rest_url.rstrip("/")
         self.timeout_connect_s = timeout_connect_s
         self.timeout_read_s = timeout_read_s
@@ -551,6 +553,33 @@ class BitvavoAdapter(BrokerAdapter):
         client_request_id = order_request.get("client_request_id")
         if client_request_id:
             body["clientOrderId"] = str(client_request_id)
+
+        # Resolve operatorId: order_request payload first, then adapter-level config (env var)
+        operator_id = order_request.get("operator_id") or self.operator_id
+        if not operator_id:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            result = self._result_error(
+                operation=operation,
+                error_type="MISSING_OPERATOR_ID",
+                code="OPERATOR_ID_REQUIRED",
+                message=(
+                    "operatorId parameter is required for live order placement — "
+                    "set BITVAVO_OPERATOR_ID env var or pass operator_id in order_request"
+                ),
+                retryable=False,
+                latency_ms=latency_ms,
+                attempts=0,
+            )
+            self._write_ops_log(
+                operation=operation,
+                market=market,
+                ok=False,
+                latency_ms=latency_ms,
+                attempts=0,
+                error_type="MISSING_OPERATOR_ID",
+            )
+            return result
+        body["operatorId"] = operator_id
 
         try:
             self._import_client()

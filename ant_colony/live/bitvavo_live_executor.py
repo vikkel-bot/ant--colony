@@ -23,6 +23,7 @@ Never raises.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from ant_colony.live.broker_execution_intake_contract import validate_broker_execution_intake
@@ -112,6 +113,12 @@ def _execute(
     adapter_command = cmd_result["adapter_command"]
     payload = adapter_command["payload"]
 
+    # Resolve operatorId before broker call: intake payload first, then env var.
+    # Fail-closed: block with a clear reason if neither source provides a value.
+    operator_id = intake_record.get("operator_id") or os.getenv("BITVAVO_OPERATOR_ID")
+    if not operator_id:
+        return _fail("BROKER_CONFIG_INVALID: operatorId missing", "G_BROKER_CALL")
+
     order_request = {
         "market": payload["market"],
         "side": payload["side"],
@@ -120,6 +127,7 @@ def _execute(
         "intended_entry_price": payload["intended_entry_price"],
         "max_notional_eur": payload["max_notional_eur"],
         "client_request_id": adapter_command["client_request_id"],
+        "operator_id": operator_id,
     }
 
     if adapter is None:
