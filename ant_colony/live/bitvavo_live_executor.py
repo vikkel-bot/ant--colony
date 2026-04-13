@@ -218,14 +218,32 @@ def _execute_and_persist(
     except (TypeError, ValueError, AttributeError):
         _slippage_eur = 0.0
 
-    # Four remaining causal fields are genuinely unavailable; stay as sentinels.
-    # UNKNOWN regime/volatility → queen_action_required=True (correct: review needed).
-    # signal_strength -1.0 → schema explicitly allows "not available".
+    # signal_key: propagate from intake if present and non-empty, else sentinel.
+    _signal_key: str = "UNKNOWN"
+    try:
+        _sk = intake_record.get("signal_key") if isinstance(intake_record, dict) else None
+        if isinstance(_sk, str) and _sk.strip():
+            _signal_key = _sk.strip()
+    except (TypeError, AttributeError):
+        _signal_key = "UNKNOWN"
+
+    # signal_strength: propagate from intake if valid (-1.0 or 0.0–1.0), else sentinel.
+    _signal_strength: float = -1.0
+    try:
+        _ss = intake_record.get("signal_strength") if isinstance(intake_record, dict) else None
+        if _ss is not None and not isinstance(_ss, bool):
+            _ss_f = float(_ss)
+            if _ss_f == -1.0 or 0.0 <= _ss_f <= 1.0:
+                _signal_strength = _ss_f
+    except (TypeError, ValueError, AttributeError):
+        _signal_strength = -1.0
+
+    # market_regime_at_entry and volatility_at_entry remain UNKNOWN (not available at entry).
     _causal = {
         "market_regime_at_entry": "UNKNOWN",
         "volatility_at_entry": "UNKNOWN",
-        "signal_strength": -1.0,
-        "signal_key": "UNKNOWN",
+        "signal_strength": _signal_strength,
+        "signal_key": _signal_key,
         "slippage_vs_expected_eur": _slippage_eur,
         "entry_latency_ms": _entry_latency_ms,
     }
