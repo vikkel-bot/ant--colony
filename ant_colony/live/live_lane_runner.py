@@ -1,5 +1,5 @@
 """
-AC-146/AC-147/AC-153/AC-168: Live Lane Runner
+AC-146/AC-147/AC-153/AC-168/AC-177: Live Lane Runner
 
 Loads live lane config + macro freeze config, runs all guards, emits JSON.
 
@@ -10,6 +10,8 @@ Gate order (fail-closed at each step):
   4. Live execution gate (live_enabled + allow_broker_execution)
   5. (AC-168) Persistent execution via execute_and_persist_live_order
      — only when intake_record is supplied and all gates pass
+     — (AC-177) intake_record is enriched with market_regime_at_entry /
+       volatility_at_entry from cb20_regime.json before executor call
 
 Constraints (hard):
 - No reads from paper/simulation artefacts
@@ -27,6 +29,19 @@ from ant_colony.live.macro_freeze_guard import check as macro_check
 from ant_colony.live.macro_freeze_guard import load_macro_config
 from ant_colony.live.live_execution_gate import evaluate_live_execution_gate
 
+# ---------------------------------------------------------------------------
+# AC-177: cb20 regime reader
+# ---------------------------------------------------------------------------
+
+# Workers live at ant_colony/workers/{MARKET}/reports/cb20_regime.json
+# relative to the repo root (two levels up from this file's package dir).
+_LIVE_DIR = Path(__file__).resolve().parent          # ant_colony/live/
+_ANT_COLONY_DIR = _LIVE_DIR.parent                   # ant_colony/
+_WORKERS_DIR = _ANT_COLONY_DIR / "workers"
+
+_VALID_REGIMES = frozenset({"BULL", "BEAR", "SIDEWAYS", "UNKNOWN"})
+_VALID_VOLATILITIES = frozenset({"LOW", "MID", "HIGH", "UNKNOWN"})
+
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "live_lane_config.json"
 
 # Default auto-freeze result used when caller does not supply one.
@@ -38,6 +53,32 @@ _AUTO_FREEZE_CLEAR_DEFAULT: dict[str, Any] = {
     "risk_state": "NORMAL",
     "freeze_new_entries": False,
 }
+
+
+def _load_cb20_regime(market: str) -> dict[str, str]:
+    """
+    AC-177: Load market_regime_at_entry and volatility_at_entry from the
+    cb20_regime.json snapshot for the given market.
+
+    Returns {"market_regime_at_entry": str, "volatility_at_entry": str}.
+    Falls back to "UNKNOWN" for any field that is absent, invalid, or
+    unreadable. Never raises.
+    """
+    regime = "UNKNOWN"
+    volatility = "UNKNOWN"
+    try:
+        snap_path = _WORKERS_DIR / market / "reports" / "cb20_regime.json"
+        if snap_path.exists():
+            snap = json.loads(snap_path.read_text(encoding="utf-8"))
+            tr = str(snap.get("trend_regime") or "").strip().upper()
+            vl = str(snap.get("vol_regime") or "").strip().upper()
+            if tr in _VALID_REGIMES:
+                regime = tr
+            if vl in _VALID_VOLATILITIES:
+                volatility = vl
+    except Exception:  # noqa: BLE001
+        pass
+    return {"market_regime_at_entry": regime, "volatility_at_entry": volatility}
 
 
 def load_config(path: Path = _DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -161,10 +202,19 @@ def run(
     # Gate 5 (AC-168): persistent live execution
     freeze = auto_freeze_result if auto_freeze_result is not None else _AUTO_FREEZE_CLEAR_DEFAULT
 
+    # AC-177: enrich intake with regime context from cb20_regime.json.
+    # Caller-supplied fields take precedence; file values fill gaps only.
+    enriched_intake = dict(intake_record)
+    _regime_ctx = _load_cb20_regime(market)
+    if "market_regime_at_entry" not in enriched_intake:
+        enriched_intake["market_regime_at_entry"] = _regime_ctx["market_regime_at_entry"]
+    if "volatility_at_entry" not in enriched_intake:
+        enriched_intake["volatility_at_entry"] = _regime_ctx["volatility_at_entry"]
+
     from ant_colony.live.bitvavo_live_executor import execute_and_persist_live_order
 
     exec_result = execute_and_persist_live_order(
-        intake_record,
+        enriched_intake,
         config,
         macro_config,
         freeze,
