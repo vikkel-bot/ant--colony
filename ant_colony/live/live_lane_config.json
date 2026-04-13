@@ -1,12 +1,12 @@
 {
   "lane": "live_test",
-  "enabled": false,
-  "live_enabled": false,
+  "enabled": true,
+  "live_enabled": true,
   "market": "BNB-EUR",
   "strategy": "EDGE3",
   "max_notional_eur": 50,
   "max_positions": 1,
-  "allow_broker_execution": false,
+  "allow_broker_execution": true,
   "allow_shared_state": false,
   "allow_paper_inputs": false,
   "base_output_dir": "C:\\Trading\\ANT_LIVE"
