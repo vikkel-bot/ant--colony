@@ -268,16 +268,18 @@ class TestClientRequestId:
         assert isinstance(ac["client_request_id"], str)
         assert ac["client_request_id"].strip() != ""
 
-    def test_client_request_id_matches_builder(self):
-        from ant_colony.live.broker_request_builder import build_broker_request
-        br = build_broker_request(_VALID_LONG)["broker_request"]
+    def test_client_request_id_is_valid_uuid(self):
+        import uuid
         ac = _ac()
-        assert ac["client_request_id"] == br["client_request_id"]
+        crid = ac["client_request_id"]
+        parsed = uuid.UUID(crid, version=4)
+        assert str(parsed) == crid
 
-    def test_client_request_id_deterministic(self):
+    def test_client_request_id_unique_per_call(self):
+        # UUID is intentionally unique per call
         r1 = build_broker_adapter_command(dict(_VALID_LONG))
         r2 = build_broker_adapter_command(dict(_VALID_LONG))
-        assert r1["adapter_command"]["client_request_id"] == \
+        assert r1["adapter_command"]["client_request_id"] != \
                r2["adapter_command"]["client_request_id"]
 
 
@@ -395,10 +397,13 @@ class TestNoFileIO:
 # ---------------------------------------------------------------------------
 
 class TestDeterminism:
-    def test_same_input_same_output(self):
+    def test_same_input_stable_fields_match(self):
+        # All fields except client_request_id (UUID) are deterministic
         r1 = build_broker_adapter_command(dict(_VALID_LONG))
         r2 = build_broker_adapter_command(dict(_VALID_LONG))
-        assert r1 == r2
+        ac1 = {k: v for k, v in r1["adapter_command"].items() if k != "client_request_id"}
+        ac2 = {k: v for k, v in r2["adapter_command"].items() if k != "client_request_id"}
+        assert ac1 == ac2
 
     def test_different_side_different_payload(self):
         long_r = build_broker_adapter_command(_VALID_LONG)

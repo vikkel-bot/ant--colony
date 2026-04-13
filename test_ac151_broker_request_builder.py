@@ -219,7 +219,7 @@ class TestOperatorApproved:
 
 
 # ---------------------------------------------------------------------------
-# I. client_request_id is non-empty deterministic string
+# I. client_request_id is a UUID; colony_request_ref holds the internal trace
 # ---------------------------------------------------------------------------
 
 class TestClientRequestId:
@@ -228,14 +228,18 @@ class TestClientRequestId:
         assert isinstance(crid, str)
         assert crid.strip() != ""
 
-    def test_starts_with_req(self):
+    def test_is_valid_uuid(self):
+        import uuid
         crid = build_broker_request(_VALID_LONG)["broker_request"]["client_request_id"]
-        assert crid.startswith("REQ_")
+        # Must parse as UUID v4 without raising
+        parsed = uuid.UUID(crid, version=4)
+        assert str(parsed) == crid
 
-    def test_deterministic(self):
+    def test_unique_per_call(self):
+        # UUIDs are random — two calls must not produce the same value
         r1 = build_broker_request(dict(_VALID_LONG))
         r2 = build_broker_request(dict(_VALID_LONG))
-        assert r1["broker_request"]["client_request_id"] == \
+        assert r1["broker_request"]["client_request_id"] != \
                r2["broker_request"]["client_request_id"]
 
     def test_differs_for_different_side(self):
@@ -244,13 +248,28 @@ class TestClientRequestId:
         assert long_r["broker_request"]["client_request_id"] != \
                short_r["broker_request"]["client_request_id"]
 
-    def test_contains_market_fragment(self):
-        crid = build_broker_request(_VALID_LONG)["broker_request"]["client_request_id"]
-        assert "BNBEUR" in crid
+    # colony_request_ref carries the internal trace (AC-169)
+    def test_colony_request_ref_present(self):
+        br = build_broker_request(_VALID_LONG)["broker_request"]
+        assert "colony_request_ref" in br
 
-    def test_contains_strategy_fragment(self):
-        crid = build_broker_request(_VALID_LONG)["broker_request"]["client_request_id"]
-        assert "EDGE3" in crid
+    def test_colony_request_ref_starts_with_req(self):
+        ref = build_broker_request(_VALID_LONG)["broker_request"]["colony_request_ref"]
+        assert ref.startswith("REQ_")
+
+    def test_colony_request_ref_contains_market_fragment(self):
+        ref = build_broker_request(_VALID_LONG)["broker_request"]["colony_request_ref"]
+        assert "BNBEUR" in ref
+
+    def test_colony_request_ref_contains_strategy_fragment(self):
+        ref = build_broker_request(_VALID_LONG)["broker_request"]["colony_request_ref"]
+        assert "EDGE3" in ref
+
+    def test_colony_request_ref_deterministic(self):
+        r1 = build_broker_request(dict(_VALID_LONG))
+        r2 = build_broker_request(dict(_VALID_LONG))
+        assert r1["broker_request"]["colony_request_ref"] == \
+               r2["broker_request"]["colony_request_ref"]
 
 
 # ---------------------------------------------------------------------------
@@ -393,16 +412,25 @@ class TestNoNetwork:
 # ---------------------------------------------------------------------------
 
 class TestDeterminism:
-    def test_same_input_same_output(self):
+    def test_colony_request_ref_deterministic(self):
+        # colony_request_ref (internal trace) is deterministic for the same input
         r1 = build_broker_request(dict(_VALID_LONG))
         r2 = build_broker_request(dict(_VALID_LONG))
-        assert r1 == r2
+        assert r1["broker_request"]["colony_request_ref"] == \
+               r2["broker_request"]["colony_request_ref"]
 
-    def test_different_order_type_different_id(self):
+    def test_client_request_id_unique_per_call(self):
+        # client_request_id (UUID) is intentionally unique per call
+        r1 = build_broker_request(dict(_VALID_LONG))
+        r2 = build_broker_request(dict(_VALID_LONG))
+        assert r1["broker_request"]["client_request_id"] != \
+               r2["broker_request"]["client_request_id"]
+
+    def test_different_order_type_different_ref(self):
         r_market = build_broker_request(_intake(order_type="market"))
         r_limit = build_broker_request(_intake(order_type="limit"))
-        assert r_market["broker_request"]["client_request_id"] != \
-               r_limit["broker_request"]["client_request_id"]
+        assert r_market["broker_request"]["colony_request_ref"] != \
+               r_limit["broker_request"]["colony_request_ref"]
 
 
 # ---------------------------------------------------------------------------

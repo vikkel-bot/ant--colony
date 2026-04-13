@@ -14,6 +14,7 @@ No exceptions leak to the caller.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from ant_colony.live.broker_execution_intake_contract import validate_broker_execution_intake
@@ -33,6 +34,7 @@ _PAYLOAD_KEYS = (
     "intended_entry_price",
     "max_notional_eur",
     "client_request_id",
+    "colony_request_ref",
     "ts_request_utc",
     "operator_approved",
 )
@@ -96,8 +98,9 @@ def _build(intake_record: Any) -> dict[str, Any]:
     if not isinstance(nr["operator_approved"], bool):
         return _fail("operator_approved must be bool")
 
-    # Build deterministic client_request_id from stable intake fields
-    client_request_id = "_".join([
+    # Internal colony trace — preserves lane/market/strategy/side/type/ts for audit.
+    # Stored as colony_request_ref; NOT sent to Bitvavo (Bitvavo rejects underscores).
+    colony_request_ref = "_".join([
         "REQ",
         nr["lane"],
         nr["market"].replace("-", ""),
@@ -106,6 +109,9 @@ def _build(intake_record: Any) -> dict[str, Any]:
         nr["order_type"],
         nr["ts_intake_utc"].replace(":", "").replace("-", "").replace("+", ""),
     ])
+
+    # Bitvavo-compatible clientOrderId: UUID v4, normalised to 32-char hex by the adapter.
+    client_request_id = str(uuid.uuid4())
 
     payload = {
         "lane": nr["lane"],
@@ -117,6 +123,7 @@ def _build(intake_record: Any) -> dict[str, Any]:
         "intended_entry_price": nr["intended_entry_price"],
         "max_notional_eur": nr["max_notional_eur"],
         "client_request_id": client_request_id,
+        "colony_request_ref": colony_request_ref,
         "ts_request_utc": nr["ts_intake_utc"],
         "operator_approved": nr["operator_approved"],
     }
