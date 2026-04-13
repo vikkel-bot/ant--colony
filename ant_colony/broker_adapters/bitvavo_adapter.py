@@ -16,8 +16,10 @@ def _safe_sleep(seconds):
 _time_module.sleep = _safe_sleep
 # === END PATCH ===
 
+import hashlib
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +27,31 @@ from typing import Any, Dict, Optional
 import types
 
 from .base import BrokerAdapter, utc_now_iso
+
+# Bitvavo clientOrderId constraints: alphanumeric only, max 32 characters.
+_BITVAVO_CLIENT_ORDER_ID_MAX = 32
+_BITVAVO_CLIENT_ORDER_ID_RE = re.compile(r'^[a-zA-Z0-9]{1,32}$')
+
+
+def _to_bitvavo_client_order_id(raw_id: str) -> str:
+    """
+    Normalise an internal client_request_id to a Bitvavo-compatible clientOrderId.
+
+    Rules applied in order:
+      1. Strip all non-alphanumeric characters.
+      2. If the result fits within 32 chars, use it directly.
+      3. If still too long, use the first 32 hex chars of the SHA-256 hash of the
+         original raw_id — deterministic, always valid, never exceeds the limit.
+
+    Returns an empty string only if raw_id itself is empty/None after stripping,
+    which the caller must treat as a block condition.
+    """
+    cleaned = re.sub(r'[^a-zA-Z0-9]', '', raw_id or '')
+    if not cleaned:
+        return ''
+    if len(cleaned) <= _BITVAVO_CLIENT_ORDER_ID_MAX:
+        return cleaned
+    return hashlib.sha256(raw_id.encode()).hexdigest()[:_BITVAVO_CLIENT_ORDER_ID_MAX]
 
 
 class BitvavoAdapter(BrokerAdapter):
@@ -550,9 +577,32 @@ class BitvavoAdapter(BrokerAdapter):
                 return result
             body["price"] = str(float(intended_price))
 
+        # Map internal client_request_id → Bitvavo clientOrderId (alphanumeric, max 32).
+        # The internal ID is preserved in order_request; only the wire format is normalised.
         client_request_id = order_request.get("client_request_id")
         if client_request_id:
-            body["clientOrderId"] = str(client_request_id)
+            bitvavo_order_id = _to_bitvavo_client_order_id(str(client_request_id))
+            if not bitvavo_order_id:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                result = self._result_error(
+                    operation=operation,
+                    error_type="INVALID_REQUEST",
+                    code="BROKER_REQUEST_INVALID",
+                    message="BROKER_REQUEST_INVALID: clientOrderId invalid",
+                    retryable=False,
+                    latency_ms=latency_ms,
+                    attempts=0,
+                )
+                self._write_ops_log(
+                    operation=operation,
+                    market=market,
+                    ok=False,
+                    latency_ms=latency_ms,
+                    attempts=0,
+                    error_type="INVALID_REQUEST",
+                )
+                return result
+            body["clientOrderId"] = bitvavo_order_id
 
         # Resolve operatorId: order_request payload first, then adapter-level config (env var)
         operator_id = order_request.get("operator_id") or self.operator_id
