@@ -581,6 +581,39 @@ class BitvavoAdapter(BrokerAdapter):
             return result
         body["operatorId"] = operator_id
 
+        # --- Final pre-call body validation: no None values allowed ---
+        # Validated fields must be non-None before reaching placeOrder.
+        # The SDK signing layer calls .encode() on constructed strings; a None
+        # value anywhere in the body can cause 'NoneType has no attribute encode'.
+        none_fields = [k for k, v in body.items() if v is None]
+        if none_fields:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            result = self._result_error(
+                operation=operation,
+                error_type="INVALID_REQUEST",
+                code="BROKER_REQUEST_INVALID",
+                message=f"BROKER_REQUEST_INVALID: {none_fields[0]} missing or null (body keys: {sorted(body.keys())})",
+                retryable=False,
+                latency_ms=latency_ms,
+                attempts=0,
+            )
+            self._write_ops_log(
+                operation=operation,
+                market=market,
+                ok=False,
+                latency_ms=latency_ms,
+                attempts=0,
+                error_type="INVALID_REQUEST",
+            )
+            return result
+
+        # Defence-in-depth: strip any remaining None values so they never reach the SDK.
+        # This cannot trigger after the validation above, but guards future body additions.
+        body = {k: v for k, v in body.items() if v is not None}
+
+        # Record body keys (no values) for post-failure visibility.
+        body_keys_sent = sorted(body.keys())
+
         try:
             self._import_client()
         except Exception as exc:
@@ -631,6 +664,7 @@ class BitvavoAdapter(BrokerAdapter):
                         latency_ms=latency_ms,
                         attempts=attempts,
                         raw_error=raw,
+                        meta_extra={"body_keys_sent": body_keys_sent},
                     )
                     self._write_ops_log(
                         operation=operation,
@@ -685,6 +719,7 @@ class BitvavoAdapter(BrokerAdapter):
             latency_ms=latency_ms,
             attempts=attempts,
             raw_error=last_error,
+            meta_extra={"body_keys_sent": body_keys_sent},
         )
         self._write_ops_log(
             operation=operation,
