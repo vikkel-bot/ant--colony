@@ -176,18 +176,58 @@ def _execute_and_persist(
             "execution_result": inner["execution_result"],
         }
 
-    # --- AC-173: feedback + memory artifacts ---
-    # Causal context is not available at entry time; use explicit sentinel values.
-    # All sentinels are valid per live_feedback_schema.py:
-    #   UNKNOWN regime/volatility → queen_action_required=True (correct: review needed)
-    #   signal_strength -1.0      → schema explicitly allows "not available"
-    _sentinel_causal = {
+    # --- AC-173/174: feedback + memory artifacts ---
+    # entry_latency_ms: adapter round-trip latency already measured in broker_response.meta.
+    _entry_latency_ms: int = 0
+    try:
+        if isinstance(broker_response, dict):
+            _meta = broker_response.get("meta") or {}
+            if isinstance(_meta, dict):
+                _entry_latency_ms = int(_meta.get("latency_ms") or 0)
+    except (TypeError, ValueError):
+        _entry_latency_ms = 0
+
+    # slippage_vs_expected_eur: (actual_fill_price - intended_entry_price) * qty.
+    # Fill price priority: fills[0].price → raw.price → execution_result.entry_price.
+    _slippage_eur: float = 0.0
+    try:
+        _intended = (
+            intake_record.get("intended_entry_price")
+            if isinstance(intake_record, dict)
+            else None
+        )
+        if _intended is not None:
+            _fill_price = None
+            if isinstance(broker_response, dict):
+                _raw = (broker_response.get("data") or {}).get("raw") or {}
+                _fills = _raw.get("fills")
+                if isinstance(_fills, list) and _fills:
+                    _fill_price = float(_fills[0].get("price") or 0) or None
+                if _fill_price is None:
+                    _p = _raw.get("price")
+                    if _p is not None:
+                        _fill_price = float(_p) or None
+            if _fill_price is None:
+                _fill_price = float(inner["execution_result"].get("entry_price", _intended))
+            _qty = float(
+                inner["execution_result"].get("qty")
+                or (intake_record.get("qty") if isinstance(intake_record, dict) else None)
+                or 0
+            )
+            _slippage_eur = round((float(_fill_price) - float(_intended)) * _qty, 8)
+    except (TypeError, ValueError, AttributeError):
+        _slippage_eur = 0.0
+
+    # Four remaining causal fields are genuinely unavailable; stay as sentinels.
+    # UNKNOWN regime/volatility → queen_action_required=True (correct: review needed).
+    # signal_strength -1.0 → schema explicitly allows "not available".
+    _causal = {
         "market_regime_at_entry": "UNKNOWN",
         "volatility_at_entry": "UNKNOWN",
         "signal_strength": -1.0,
         "signal_key": "UNKNOWN",
-        "slippage_vs_expected_eur": 0.0,
-        "entry_latency_ms": 0,
+        "slippage_vs_expected_eur": _slippage_eur,
+        "entry_latency_ms": _entry_latency_ms,
     }
 
     from ant_colony.live.live_feedback_builder import build_live_feedback_record
@@ -198,7 +238,7 @@ def _execute_and_persist(
         write_memory_artifact,
     )
 
-    fb_build = build_live_feedback_record(inner["execution_result"], _sentinel_causal)
+    fb_build = build_live_feedback_record(inner["execution_result"], _causal)
     if not fb_build["ok"]:
         return {
             "ok": False,
