@@ -60,6 +60,7 @@ _LIVE_INTAKE = {
     "risk_state": "NORMAL",
     "freeze_new_entries": False,
     "operator_approved": True,
+    "operator_id": "OP-TEST",
     "ts_intake_utc": _NOW,
 }
 
