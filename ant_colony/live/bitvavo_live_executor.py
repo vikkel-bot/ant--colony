@@ -176,7 +176,79 @@ def _execute_and_persist(
             "execution_result": inner["execution_result"],
         }
 
-    return {**inner, "artifacts": write_result["paths"]}
+    # --- AC-173: feedback + memory artifacts ---
+    # Causal context is not available at entry time; use explicit sentinel values.
+    # All sentinels are valid per live_feedback_schema.py:
+    #   UNKNOWN regime/volatility → queen_action_required=True (correct: review needed)
+    #   signal_strength -1.0      → schema explicitly allows "not available"
+    _sentinel_causal = {
+        "market_regime_at_entry": "UNKNOWN",
+        "volatility_at_entry": "UNKNOWN",
+        "signal_strength": -1.0,
+        "signal_key": "UNKNOWN",
+        "slippage_vs_expected_eur": 0.0,
+        "entry_latency_ms": 0,
+    }
+
+    from ant_colony.live.live_feedback_builder import build_live_feedback_record
+    from ant_colony.live.queen_feedback_intake import intake_feedback_for_queen
+    from ant_colony.live.queen_memory_store import build_queen_memory_entry
+    from ant_colony.live.live_artifact_writer import (
+        write_feedback_artifact,
+        write_memory_artifact,
+    )
+
+    fb_build = build_live_feedback_record(inner["execution_result"], _sentinel_causal)
+    if not fb_build["ok"]:
+        return {
+            "ok": False,
+            "reason": f"FEEDBACK_BUILD_FAILED: {fb_build['reason']}",
+            "gate": "K_FEEDBACK",
+            "execution_result": inner["execution_result"],
+        }
+
+    queen_intake = intake_feedback_for_queen(fb_build["feedback_record"])
+    if not queen_intake["ok"]:
+        return {
+            "ok": False,
+            "reason": f"QUEEN_INTAKE_FAILED: {queen_intake['reason']}",
+            "gate": "K_FEEDBACK",
+            "execution_result": inner["execution_result"],
+        }
+
+    fb_write = write_feedback_artifact(base_output_dir, lane, queen_intake["accepted_feedback"])
+    if not fb_write["ok"]:
+        return {
+            "ok": False,
+            "reason": f"FEEDBACK_WRITE_FAILED: {fb_write['reason']}",
+            "gate": "K_FEEDBACK",
+            "execution_result": inner["execution_result"],
+        }
+
+    mem_build = build_queen_memory_entry(queen_intake["accepted_feedback"])
+    if not mem_build["ok"]:
+        return {
+            "ok": False,
+            "reason": f"MEMORY_BUILD_FAILED: {mem_build['reason']}",
+            "gate": "K_FEEDBACK",
+            "execution_result": inner["execution_result"],
+        }
+
+    mem_write = write_memory_artifact(base_output_dir, lane, mem_build["memory_entry"])
+    if not mem_write["ok"]:
+        return {
+            "ok": False,
+            "reason": f"MEMORY_WRITE_FAILED: {mem_write['reason']}",
+            "gate": "K_FEEDBACK",
+            "execution_result": inner["execution_result"],
+        }
+
+    all_artifacts = {
+        **write_result["paths"],
+        **fb_write["paths"],
+        **mem_write["paths"],
+    }
+    return {**inner, "artifacts": all_artifacts}
 
 
 def _execute(
