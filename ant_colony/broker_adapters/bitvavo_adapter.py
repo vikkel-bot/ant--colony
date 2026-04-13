@@ -21,6 +21,7 @@ import json
 import os
 import re
 import time
+import uuid as _uuid_module
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -38,15 +39,26 @@ def _to_bitvavo_client_order_id(raw_id: str) -> str:
     Normalise an internal client_request_id to a Bitvavo-compatible clientOrderId.
 
     Rules applied in order:
-      1. Strip all non-alphanumeric characters.
-      2. If the result fits within 32 chars, use it directly.
-      3. If still too long, use the first 32 hex chars of the SHA-256 hash of the
+      1. If the input is a valid UUID string, return it in canonical hyphenated form
+         (e.g. "550e8400-e29b-41d4-a716-446655440000"). Bitvavo accepts UUID format.
+      2. Otherwise strip all non-alphanumeric characters.
+      3. If the stripped result fits within 32 chars, use it directly.
+      4. If still too long, use the first 32 hex chars of the SHA-256 hash of the
          original raw_id — deterministic, always valid, never exceeds the limit.
 
     Returns an empty string only if raw_id itself is empty/None after stripping,
     which the caller must treat as a block condition.
     """
-    cleaned = re.sub(r'[^a-zA-Z0-9]', '', raw_id or '')
+    if not raw_id:
+        return ''
+    # Fast path: input already in canonical hyphenated UUID format (36 chars, 8-4-4-4-12).
+    # Bitvavo accepts UUID format directly; return it unchanged rather than stripping hyphens.
+    if len(raw_id) == 36 and raw_id[8] == '-' and raw_id[13] == '-':
+        try:
+            return str(_uuid_module.UUID(raw_id))
+        except (ValueError, AttributeError):
+            pass
+    cleaned = re.sub(r'[^a-zA-Z0-9]', '', raw_id)
     if not cleaned:
         return ''
     if len(cleaned) <= _BITVAVO_CLIENT_ORDER_ID_MAX:
