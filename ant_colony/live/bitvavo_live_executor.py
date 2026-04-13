@@ -238,10 +238,34 @@ def _execute_and_persist(
     except (TypeError, ValueError, AttributeError):
         _signal_strength = -1.0
 
-    # market_regime_at_entry and volatility_at_entry remain UNKNOWN (not available at entry).
+    # market_regime_at_entry: propagate from intake if valid, else sentinel.
+    # Valid values match live_feedback_schema: BULL | BEAR | SIDEWAYS | UNKNOWN.
+    # Source on PC2: cb20_regime.json field "trend_regime" — must be included in
+    # intake_record by the live trading loop before calling this function.
+    _VALID_REGIMES = frozenset({"BULL", "BEAR", "SIDEWAYS", "UNKNOWN"})
+    _market_regime: str = "UNKNOWN"
+    try:
+        _mr = intake_record.get("market_regime_at_entry") if isinstance(intake_record, dict) else None
+        if isinstance(_mr, str) and _mr.strip().upper() in _VALID_REGIMES:
+            _market_regime = _mr.strip().upper()
+    except (TypeError, AttributeError):
+        _market_regime = "UNKNOWN"
+
+    # volatility_at_entry: propagate from intake if valid, else sentinel.
+    # Valid values: LOW | MID | HIGH | UNKNOWN.
+    # Source on PC2: cb20_regime.json field "vol_regime".
+    _VALID_VOLATILITIES = frozenset({"LOW", "MID", "HIGH", "UNKNOWN"})
+    _volatility: str = "UNKNOWN"
+    try:
+        _vl = intake_record.get("volatility_at_entry") if isinstance(intake_record, dict) else None
+        if isinstance(_vl, str) and _vl.strip().upper() in _VALID_VOLATILITIES:
+            _volatility = _vl.strip().upper()
+    except (TypeError, AttributeError):
+        _volatility = "UNKNOWN"
+
     _causal = {
-        "market_regime_at_entry": "UNKNOWN",
-        "volatility_at_entry": "UNKNOWN",
+        "market_regime_at_entry": _market_regime,
+        "volatility_at_entry": _volatility,
         "signal_strength": _signal_strength,
         "signal_key": _signal_key,
         "slippage_vs_expected_eur": _slippage_eur,
