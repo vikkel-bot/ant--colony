@@ -37,6 +37,9 @@ edge_colony_runtime_snapshot_*.zip
 edge_colony_code_snapshot_*.zip
 
 # ===== Trading runtime artifacts =====
+# C:\Trading\ANT_LIVE\ is outside this repository — all runtime artifacts
+# (heartbeat.json, memory/*.json, queen_*.json, broker artifacts) are excluded
+# by definition and require no gitignore entry.
 *.jsonl
 
 # Generated reports / outputs inside repo if ever created

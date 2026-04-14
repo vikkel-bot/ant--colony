@@ -1,5 +1,5 @@
 """
-AC-146/AC-147/AC-153/AC-168/AC-177: Live Lane Runner
+AC-146/AC-147/AC-153/AC-168/AC-177/AC-187: Live Lane Runner
 
 Loads live lane config + macro freeze config, runs all guards, emits JSON.
 
@@ -13,6 +13,11 @@ Gate order (fail-closed at each step):
      — (AC-177) intake_record is enriched with market_regime_at_entry /
        volatility_at_entry from cb20_regime.json before executor call
 
+AC-187: main() writes an observational heartbeat JSON after every run
+  attempt (including blocked/fail-closed outcomes). Heartbeat is written
+  to {base_output_dir}/heartbeat.json and never affects execution
+  decisions.
+
 Constraints (hard):
 - No reads from paper/simulation artefacts
 - No writes outside own lane scope
@@ -21,6 +26,9 @@ Constraints (hard):
 from __future__ import annotations
 
 import json
+import os
+import socket
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +51,8 @@ _VALID_REGIMES = frozenset({"BULL", "BEAR", "SIDEWAYS", "UNKNOWN"})
 _VALID_VOLATILITIES = frozenset({"LOW", "MID", "HIGH", "UNKNOWN"})
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "live_lane_config.json"
+_DEFAULT_BASE_OUTPUT_DIR = r"C:\Trading\ANT_LIVE"
+_HEARTBEAT_FILENAME = "heartbeat.json"
 
 # Default auto-freeze result used when caller does not supply one.
 # Fail-safe: CLEAR means auto-freeze is not blocking — the controlled live
@@ -79,6 +89,39 @@ def _load_cb20_regime(market: str) -> dict[str, str]:
     except Exception:  # noqa: BLE001
         pass
     return {"market_regime_at_entry": regime, "volatility_at_entry": volatility}
+
+
+def _write_heartbeat(
+    result: dict[str, Any],
+    base_output_dir: str | None = None,
+) -> None:
+    """
+    AC-187: Write an observational heartbeat JSON file after each run attempt.
+
+    Captures component, timestamp, last run status, and host. Never affects
+    execution decisions. Never raises.
+    """
+    try:
+        out_dir = Path(base_output_dir or _DEFAULT_BASE_OUTPUT_DIR)
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state   = result.get("state", "UNKNOWN")
+        heartbeat = {
+            "component":    "live_lane_runner",
+            "ts_utc":       now_str,
+            "last_run_utc": now_str,
+            "last_status":  state,
+            "lane":         result.get("lane", "unknown"),
+            "ok":           state != "BLOCKED",
+            "reason":       result.get("reason"),
+            "host":         socket.gethostname(),
+        }
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / _HEARTBEAT_FILENAME
+        tmp  = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(heartbeat, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def load_config(path: Path = _DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -250,7 +293,10 @@ def run(
 
 
 def main() -> None:
-    result = run()
+    config = load_config()
+    result = run(config=config)
+    # AC-187: observational heartbeat — never affects execution decisions
+    _write_heartbeat(result, config.get("base_output_dir"))
     print(json.dumps(result, indent=2))
 
 
