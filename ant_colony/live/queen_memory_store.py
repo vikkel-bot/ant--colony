@@ -99,9 +99,16 @@ def _build(record: Any) -> dict[str, Any]:
 
     memory_ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # AC-189: A trade is only closed when a proven exit exists.
+    # broker_order_id_exit == "ENTRY_ONLY_PENDING_EXIT" means the entry has
+    # no corresponding exit yet — do not label it as a closed trade.
+    _exit_id = nr.get("broker_order_id_exit", "")
+    _is_closed = bool(_exit_id) and _exit_id != "ENTRY_ONLY_PENDING_EXIT"
+    record_type = "closed_trade_memory" if _is_closed else "open_trade_memory"
+
     memory_entry = {
         "memory_version": "1",
-        "record_type": "closed_trade_memory",
+        "record_type": record_type,
         "lane": nr["lane"],
         "market": nr["market"],
         "strategy_key": nr["strategy_key"],

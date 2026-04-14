@@ -462,8 +462,19 @@ class TestMemoryMetadata:
     def test_memory_version_is_1(self):
         assert _mem()["memory_entry"]["memory_version"] == "1"
 
-    def test_record_type(self):
+    def test_record_type_closed_when_exit_id_present(self):
+        # Valid exit order ID → closed trade
         assert _mem()["memory_entry"]["record_type"] == "closed_trade_memory"
+
+    def test_record_type_open_when_sentinel(self):
+        # AC-189: ENTRY_ONLY_PENDING_EXIT sentinel → open trade
+        result = _mem(broker_order_id_exit="ENTRY_ONLY_PENDING_EXIT")
+        assert result["memory_entry"]["record_type"] == "open_trade_memory"
+
+    def test_record_type_not_closed_when_sentinel(self):
+        # AC-189: must never label a pending-exit trade as closed
+        result = _mem(broker_order_id_exit="ENTRY_ONLY_PENDING_EXIT")
+        assert result["memory_entry"]["record_type"] != "closed_trade_memory"
 
     def test_lane_correct(self):
         assert _mem()["memory_entry"]["lane"] == "live_test"
