@@ -142,7 +142,7 @@ def _reconcile(intake_record: Any, broker_response: Any) -> dict[str, Any]:
         "exit_reason": "UNKNOWN",            # sentinel: position still open
         "execution_quality_flag": quality_flag,
         "broker_order_id_entry": broker_order_id,
-        "broker_order_id_exit": "ENTRY_ONLY_PENDING_EXIT",  # sentinel
+        "broker_order_id_exit": None,  # AC-190: null until a proven exit exists
         "ts_recorded_utc": now_iso,
     }
 

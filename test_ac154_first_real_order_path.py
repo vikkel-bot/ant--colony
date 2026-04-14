@@ -400,8 +400,9 @@ class TestAC148Compatibility:
     def test_broker_order_id_entry_is_correct(self):
         assert _exec()["execution_result"]["broker_order_id_entry"] == "BTV-ORDER-001"
 
-    def test_broker_order_id_exit_is_sentinel(self):
-        assert _exec()["execution_result"]["broker_order_id_exit"] == "ENTRY_ONLY_PENDING_EXIT"
+    def test_broker_order_id_exit_is_null(self):
+        # AC-190: null until a proven exit exists
+        assert _exec()["execution_result"]["broker_order_id_exit"] is None
 
     def test_execution_quality_flag_ok(self):
         assert _exec()["execution_result"]["execution_quality_flag"] == "OK"
@@ -529,9 +530,10 @@ class TestReconcilerSentinels:
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
         assert er["exit_reason"] == "UNKNOWN"
 
-    def test_broker_order_id_exit_sentinel(self):
+    def test_broker_order_id_exit_null(self):
+        # AC-190: null until a proven exit exists
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["broker_order_id_exit"] == "ENTRY_ONLY_PENDING_EXIT"
+        assert er["broker_order_id_exit"] is None
 
     def test_realized_pnl_zero(self):
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]

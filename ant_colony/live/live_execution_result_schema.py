@@ -180,10 +180,14 @@ def _validate(record: Any) -> dict[str, Any]:
         )
 
     # --- broker order ids ---
-    for id_field in ("broker_order_id_entry", "broker_order_id_exit"):
-        v = record[id_field]
-        if not isinstance(v, str) or not v.strip():
-            return _fail(f"{id_field} must be a non-empty string")
+    v = record["broker_order_id_entry"]
+    if not isinstance(v, str) or not v.strip():
+        return _fail("broker_order_id_entry must be a non-empty string")
+
+    # AC-190: broker_order_id_exit is null while a position is still open.
+    v = record["broker_order_id_exit"]
+    if v is not None and (not isinstance(v, str) or not v.strip()):
+        return _fail("broker_order_id_exit must be a non-empty string or null")
 
     # --- normalize ---
     normalized = {k: record[k] for k in _NORMALIZED_KEY_ORDER}

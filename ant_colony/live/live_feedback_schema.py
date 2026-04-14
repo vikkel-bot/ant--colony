@@ -177,10 +177,15 @@ def _validate(record: Any) -> dict[str, Any]:
     if record["execution_quality_flag"] not in _VALID_QUALITY_FLAGS:
         return _fail(f"execution_quality_flag must be one of {sorted(_VALID_QUALITY_FLAGS)}, got {record['execution_quality_flag']!r}")
 
-    for id_field in ("broker_order_id_entry", "broker_order_id_exit"):
-        v = record[id_field]
-        if not isinstance(v, str) or not v.strip():
-            return _fail(f"{id_field} must be a non-empty string")
+    v = record["broker_order_id_entry"]
+    if not isinstance(v, str) or not v.strip():
+        return _fail("broker_order_id_entry must be a non-empty string")
+
+    # AC-190: broker_order_id_exit is null while a position is still open;
+    # it is only set to a real order ID when the exit is proven.
+    v = record["broker_order_id_exit"]
+    if v is not None and (not isinstance(v, str) or not v.strip()):
+        return _fail("broker_order_id_exit must be a non-empty string or null")
 
     # -----------------------------------------------------------------------
     # Causal context fields
