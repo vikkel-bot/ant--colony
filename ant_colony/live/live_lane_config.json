@@ -1,6 +1,6 @@
 {
   "lane": "live_test",
-  "enabled": false,
+  "enabled": true,
   "live_enabled": false,
   "market": "BNB-EUR",
   "strategy": "EDGE3",
