@@ -9,5 +9,7 @@
   "allow_broker_execution": false,
   "allow_shared_state": false,
   "allow_paper_inputs": false,
-  "base_output_dir": "C:\\Trading\\ANT_LIVE"
+  "base_output_dir": "C:\\Trading\\ANT_LIVE",
+  "sl_pct": 0.03,
+  "tp_pct": 0.05
 }

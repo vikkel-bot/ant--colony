@@ -1,5 +1,5 @@
 """
-AC-146/AC-147/AC-153/AC-168/AC-177/AC-187: Live Lane Runner
+AC-146/AC-147/AC-153/AC-168/AC-177/AC-187/AC-191: Live Lane Runner
 
 Loads live lane config + macro freeze config, runs all guards, emits JSON.
 
@@ -124,6 +124,81 @@ def _write_heartbeat(
         pass
 
 
+# ---------------------------------------------------------------------------
+# AC-191: open-position scan + price fetch helpers
+# ---------------------------------------------------------------------------
+
+import re as _re
+_SAFE_NAME_RE_RUNNER = _re.compile(r"[^a-zA-Z0-9_\-]")
+
+
+def _find_open_position(cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    AC-191: Scan execution dir for an open position matching market/strategy.
+
+    Returns the execution artifact dict when an open position exists (i.e.
+    the artifact has no corresponding exit file).  Returns None when no open
+    position is found.
+    Fail-closed: unreadable artifacts or missing broker_order_id_entry cause
+    an immediate return of None so callers block safely.
+    Never raises.
+    """
+    try:
+        base_output_dir = cfg.get("base_output_dir")
+        if not base_output_dir:
+            return None
+        lane     = str(cfg.get("lane") or "live")
+        market   = str(cfg.get("market") or "")
+        strategy = str(cfg.get("strategy") or "")
+        exec_dir = Path(base_output_dir) / lane / "execution"
+        exit_dir = Path(base_output_dir) / lane / "exit"
+        if not exec_dir.exists():
+            return None
+        for exec_file in sorted(exec_dir.glob("*.json")):
+            try:
+                data = json.loads(exec_file.read_text(encoding="utf-8"))
+            except Exception:
+                return None  # unreadable → fail-closed
+            file_market   = str(data.get("market") or "")
+            file_strategy = str(data.get("strategy_key") or data.get("strategy") or "")
+            if file_market != market or file_strategy != strategy:
+                continue
+            broker_order_id = str(data.get("broker_order_id_entry") or "").strip()
+            if not broker_order_id:
+                return None  # missing id → fail-closed
+            safe_id   = _SAFE_NAME_RE_RUNNER.sub("_", broker_order_id)
+            exit_file = exit_dir / f"{safe_id}.json"
+            if not exit_file.exists():
+                return data  # open position found
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch_current_price(adapter: Any, market: str) -> float | None:
+    """
+    AC-191: Fetch the most recent close price for market via get_market_data.
+
+    Returns float price on success, None on any error.
+    Never raises.
+    """
+    try:
+        if adapter is None or not hasattr(adapter, "get_market_data"):
+            return None
+        result = adapter.get_market_data(market, "1m", limit=1)
+        if not result.get("ok"):
+            return None
+        rows = result.get("data", {}).get("rows", [])
+        if not rows:
+            return None
+        price = rows[-1].get("close")
+        if not isinstance(price, (int, float)) or isinstance(price, bool) or price <= 0:
+            return None
+        return float(price)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def load_config(path: Path = _DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     """Load lane config from JSON. Returns empty dict on error (fail-closed)."""
     try:
@@ -228,8 +303,15 @@ def run(
             "strategy": strategy,
         }
 
-    # All gates are open.  Without an intake record there is nothing to execute.
+    # All gates are open.  Without an intake record, check for autonomous TP/SL
+    # exit (AC-191) before returning LIVE_GATE_READY.
     if intake_record is None:
+        freeze = auto_freeze_result if auto_freeze_result is not None else _AUTO_FREEZE_CLEAR_DEFAULT
+        auto_exit = _check_auto_exit(
+            config, macro_config, freeze, risk_state, lane, market, strategy, _adapter
+        )
+        if auto_exit is not None:
+            return auto_exit
         return {
             "component": "live_lane_runner",
             "lane": lane,
@@ -304,6 +386,95 @@ def run(
         "execution_result": exec_result.get("execution_result"),
         "artifacts": exec_result.get("artifacts"),
     }
+
+
+def _check_auto_exit(
+    config: dict[str, Any],
+    macro_config: dict[str, Any],
+    freeze: dict[str, Any],
+    risk_state: str,
+    lane: str,
+    market: str,
+    strategy: str,
+    _adapter: Any,
+) -> dict[str, Any] | None:
+    """
+    AC-191: Autonomous TP/SL exit check.
+
+    Called when no intake_record is present. Scans for an open position;
+    if found, fetches the current price and evaluates TP/SL.
+
+    Returns:
+        EXIT_EXECUTED result dict  when exit is triggered and succeeds
+        BLOCKED result dict        when price cannot be fetched (fail-closed)
+                                   or when exit_signal returns an error
+        None                       when no open position or within range
+    Never raises.
+    """
+    try:
+        open_pos = _find_open_position(config)
+        if open_pos is None:
+            return None  # no open position — nothing to check
+
+        # Price fetch is required. Fail-closed if unavailable.
+        current_price = _fetch_current_price(_adapter, market)
+        if current_price is None:
+            return {
+                "component": "live_lane_runner",
+                "lane":      lane,
+                "state":     "BLOCKED",
+                "reason":    "PRICE_FETCH_FAILED",
+                "live_enabled": True,
+                "allow_broker_execution": True,
+                "risk_state": risk_state,
+                "market":    market,
+                "strategy":  strategy,
+            }
+
+        from ant_colony.live.live_exit_signal import evaluate_exit_signal
+        signal = evaluate_exit_signal(open_pos, config, current_price)
+
+        if signal is None:
+            return None  # within range — no exit
+
+        if isinstance(signal, dict) and not signal.get("ok", True):
+            # evaluate_exit_signal returned a fail-closed error
+            return {
+                "component": "live_lane_runner",
+                "lane":      lane,
+                "state":     "BLOCKED",
+                "reason":    f"EXIT_SIGNAL_ERROR: {signal.get('reason')}",
+                "live_enabled": True,
+                "allow_broker_execution": True,
+                "risk_state": risk_state,
+                "market":    market,
+                "strategy":  strategy,
+            }
+
+        # TP or SL triggered — route to exit executor
+        return _run_exit(
+            signal,
+            config,
+            macro_config,
+            freeze,
+            lane,
+            market,
+            strategy,
+            risk_state,
+            _adapter,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "component": "live_lane_runner",
+            "lane":      lane,
+            "state":     "BLOCKED",
+            "reason":    f"AUTO_EXIT_ERROR: {exc}",
+            "live_enabled": True,
+            "allow_broker_execution": True,
+            "risk_state": risk_state,
+            "market":    market,
+            "strategy":  strategy,
+        }
 
 
 def _run_exit(
