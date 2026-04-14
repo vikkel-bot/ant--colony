@@ -54,7 +54,7 @@ _LANE_CFG_GATE_OPEN = {
     "allow_broker_execution": True,
     "allow_shared_state": False,
     "allow_paper_inputs": False,
-    "base_output_dir": "C:\\Trading\\ANT_LIVE",
+    "base_output_dir": "C:\\Trading\\ANT_LIVE_TEST_ONLY",
 }
 
 _MACRO_NORMAL = {

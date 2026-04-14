@@ -1,11 +1,18 @@
 """
-AC-153: Live Execution Gate
+AC-153 / AC-188: Live Execution Gate
 
 Hard gate that must be fully open before live broker execution is allowed.
 Every condition must be true simultaneously — no partial allows.
 
 Fail-closed: any missing, invalid, or unsafe condition blocks execution.
-No broker calls. No file IO. No paper pipeline imports.
+No broker calls. No paper pipeline imports.
+
+AC-188: File IO added for open-position guard only. Scans
+{base_output_dir}/{lane}/execution/ for existing artifacts matching the
+current market/strategy pair; cross-references {lane}/exit/ for closed
+positions. If an execution exists with no corresponding exit →
+OPEN_POSITION_EXISTS (blocks new entries). Fail-closed: unreadable
+artifacts block immediately.
 
 The repo default is live_enabled=false. Changing this to true is an explicit
 operator action. Accidental activation is technically impossible within this
@@ -13,7 +20,12 @@ gate chain.
 """
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from typing import Any
+
+_SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_\-]")
 
 from ant_colony.live.broker_execution_intake_contract import validate_broker_execution_intake
 
@@ -66,6 +78,87 @@ def _block(
         "allow_broker_execution": allow_broker_execution,
         "risk_state": risk_state,
     }
+
+
+def _check_open_position(
+    cfg: dict[str, Any],
+    risk_state: str,
+) -> dict[str, Any] | None:
+    """
+    AC-188: Block new entries when an open position already exists.
+
+    Scans {base_output_dir}/{lane}/execution/ for JSON files whose market and
+    strategy_key match the current config. For each match, checks whether a
+    corresponding exit artifact exists in {lane}/exit/ (keyed by the execution's
+    broker_order_id_entry). If an execution has no matching exit, the position
+    is still open → return OPEN_POSITION_EXISTS block.
+
+    Returns a _block() dict when blocked, None when the entry may proceed.
+    Fail-closed: unreadable execution artifacts, or artifacts with missing
+    broker_order_id_entry, block immediately.
+    Never raises.
+    """
+    try:
+        base_output_dir = cfg.get("base_output_dir")
+        if not base_output_dir:
+            return None   # no artifact dir configured — guard skipped
+
+        lane     = str(cfg.get("lane") or "live")
+        market   = str(cfg.get("market") or "")
+        strategy = str(cfg.get("strategy") or "")
+
+        exec_dir = Path(base_output_dir) / lane / "execution"
+        exit_dir = Path(base_output_dir) / lane / "exit"
+
+        if not exec_dir.exists():
+            return None   # no executions yet → no open position
+
+        for exec_file in sorted(exec_dir.glob("*.json")):
+            # --- read execution artifact ---
+            try:
+                data = json.loads(exec_file.read_text(encoding="utf-8"))
+            except Exception:
+                return _block(
+                    "OPEN_POSITION_EXISTS: execution artifact unreadable",
+                    live_enabled=True,
+                    allow_broker_execution=True,
+                    risk_state=risk_state,
+                )
+
+            file_market   = str(data.get("market") or "")
+            file_strategy = str(data.get("strategy_key") or data.get("strategy") or "")
+
+            if file_market != market or file_strategy != strategy:
+                continue   # different pair — ignore
+
+            # --- execution matches this market/strategy ---
+            broker_order_id = str(data.get("broker_order_id_entry") or "").strip()
+            if not broker_order_id:
+                return _block(
+                    "OPEN_POSITION_EXISTS: execution artifact missing broker_order_id_entry",
+                    live_enabled=True,
+                    allow_broker_execution=True,
+                    risk_state=risk_state,
+                )
+
+            safe_id   = _SAFE_NAME_RE.sub("_", broker_order_id)
+            exit_file = exit_dir / f"{safe_id}.json"
+            if not exit_file.exists():
+                return _block(
+                    "OPEN_POSITION_EXISTS",
+                    live_enabled=True,
+                    allow_broker_execution=True,
+                    risk_state=risk_state,
+                )
+
+        return None   # all executions have exits — entry is safe
+    except Exception:  # noqa: BLE001
+        return _block(
+            "OPEN_POSITION_EXISTS: position check failed unexpectedly",
+            live_enabled=True,
+            allow_broker_execution=True,
+            risk_state=risk_state,
+        )
 
 
 def _evaluate(
@@ -222,6 +315,15 @@ def _evaluate(
                 allow_broker_execution=True,
                 risk_state=risk_state,
             )
+
+    # --- AC-188: open position guard (entry path only) ---
+    # Only runs when intake_record is present (i.e., an actual entry execution
+    # attempt). Gate-check calls (no intake) and exit-executor calls (no intake)
+    # are not affected.
+    if intake is not None:
+        pos_block = _check_open_position(cfg, risk_state)
+        if pos_block is not None:
+            return pos_block
 
     return {
         "allow": True,

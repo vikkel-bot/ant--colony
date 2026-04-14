@@ -121,6 +121,36 @@ def write_feedback_artifact(
         return {"ok": False, "reason": f"write_feedback_artifact failed: {exc}"}
 
 
+def write_exit_artifact(
+    base_output_dir: str,
+    lane: str,
+    exit_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    AC-188: Write an exit artifact after a live position is closed.
+
+    Creates:
+        {base_output_dir}/{lane}/exit/{safe_entry_order_id}.json
+
+    The filename is keyed on entry_order_id (which equals broker_order_id_entry
+    in the corresponding execution artifact) so the open-position guard can
+    cross-reference them.
+
+    Returns:
+        {"ok": True, "paths": {"exit": str}}
+        {"ok": False, "reason": str}
+    """
+    try:
+        entry_order_id = _safe_filename(
+            str(exit_artifact.get("entry_order_id") or "UNKNOWN")
+        )
+        path = Path(base_output_dir) / lane / "exit" / f"{entry_order_id}.json"
+        _write_json_atomic(path, exit_artifact)
+        return {"ok": True, "paths": {"exit": str(path)}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"write_exit_artifact failed: {exc}"}
+
+
 def write_memory_artifact(
     base_output_dir: str,
     lane: str,

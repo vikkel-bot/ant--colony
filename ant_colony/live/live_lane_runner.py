@@ -242,8 +242,22 @@ def run(
             "note": "gate open; no execution in AC-153",
         }
 
-    # Gate 5 (AC-168): persistent live execution
+    # Gate 5 (AC-168 / AC-188): persistent live execution — entry or exit path
     freeze = auto_freeze_result if auto_freeze_result is not None else _AUTO_FREEZE_CLEAR_DEFAULT
+
+    # AC-188: if the intake carries an exit_intent, route to the exit executor.
+    if isinstance(intake_record, dict) and "exit_intent" in intake_record:
+        return _run_exit(
+            intake_record["exit_intent"],
+            config,
+            macro_config,
+            freeze,
+            lane,
+            market,
+            strategy,
+            risk_state,
+            _adapter,
+        )
 
     # AC-177: enrich intake with regime context from cb20_regime.json.
     # Caller-supplied fields take precedence; file values fill gaps only.
@@ -290,6 +304,84 @@ def run(
         "execution_result": exec_result.get("execution_result"),
         "artifacts": exec_result.get("artifacts"),
     }
+
+
+def _run_exit(
+    exit_intent: Any,
+    config: dict[str, Any],
+    macro_config: dict[str, Any],
+    freeze: dict[str, Any],
+    lane: str,
+    market: str,
+    strategy: str,
+    risk_state: str,
+    _adapter: Any,
+) -> dict[str, Any]:
+    """
+    AC-188: Execute a live exit and persist the exit artifact.
+
+    Calls the existing exit executor, then writes an exit artifact to
+    {base_output_dir}/{lane}/exit/ so the open-position guard can confirm
+    the position is closed.  Fail-closed; never raises.
+    """
+    try:
+        from ant_colony.live.bitvavo_live_exit_executor import execute_live_exit
+        from ant_colony.live.live_artifact_writer import write_exit_artifact
+        from datetime import datetime, timezone
+
+        exit_result = execute_live_exit(
+            exit_intent, config, macro_config, freeze, _adapter=_adapter
+        )
+
+        if not exit_result.get("ok"):
+            return {
+                "component": "live_lane_runner",
+                "lane":      lane,
+                "state":     "BLOCKED",
+                "reason":    exit_result.get("reason", "EXIT_FAILED"),
+                "market":    market,
+                "strategy":  strategy,
+                "risk_state": risk_state,
+            }
+
+        # Build artifact record combining exit intent with result
+        ts_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        artifact = {
+            **({k: v for k, v in exit_intent.items()} if isinstance(exit_intent, dict) else {}),
+            "ok":                True,
+            "reason":            "LIVE_EXIT_EXECUTED",
+            "exit_execution_raw": exit_result.get("exit_execution_raw"),
+            "ts_recorded_utc":   ts_now,
+        }
+
+        base_output_dir = config.get("base_output_dir") if isinstance(config, dict) else None
+        if base_output_dir:
+            write_exit_artifact(base_output_dir, lane, artifact)
+
+        return {
+            "component":    "live_lane_runner",
+            "lane":         lane,
+            "state":        "EXIT_EXECUTED",
+            "live_enabled": True,
+            "allow_broker_execution": True,
+            "risk_state":   risk_state,
+            "market":       market,
+            "strategy":     strategy,
+            "exit_result":  exit_result,
+            "exit_artifact_dir": (
+                str(Path(base_output_dir) / lane / "exit") if base_output_dir else None
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "component": "live_lane_runner",
+            "lane":      lane,
+            "state":     "BLOCKED",
+            "reason":    f"EXIT_UNEXPECTED_ERROR: {exc}",
+            "market":    market,
+            "strategy":  strategy,
+            "risk_state": risk_state,
+        }
 
 
 def main() -> None:
