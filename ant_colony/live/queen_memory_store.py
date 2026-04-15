@@ -75,8 +75,11 @@ def _build(record: Any) -> dict[str, Any]:
     nr = schema_result["normalized_record"]
 
     # --- win/loss label ---
+    # AC-193: realized_pnl_eur is null for open trades (no exit yet)
     pnl = nr["realized_pnl_eur"]
-    if pnl > 0:
+    if pnl is None:
+        win_loss_label = "OPEN"
+    elif pnl > 0:
         win_loss_label = "WIN"
     elif pnl < 0:
         win_loss_label = "LOSS"

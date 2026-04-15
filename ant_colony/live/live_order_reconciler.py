@@ -150,13 +150,13 @@ def _reconcile(intake_record: Any, broker_response: Any) -> dict[str, Any]:
         "position_side": intake_record.get("position_side"),
         "qty": qty,
         "entry_ts_utc": entry_ts,
-        "exit_ts_utc": entry_ts,             # sentinel: position still open
+        "exit_ts_utc": None,                 # AC-193: null until exit proven
         "entry_price": fill_price,
-        "exit_price": fill_price,            # sentinel: same as entry until exit
-        "realized_pnl_eur": 0.0,             # sentinel: no realized PNL yet
+        "exit_price": None,                  # AC-193: null until exit proven
+        "realized_pnl_eur": None,            # AC-193: null until exit proven
         "slippage_eur": 0.0,                 # computed on exit
-        "hold_duration_minutes": 0.0,        # sentinel: just entered
-        "exit_reason": "UNKNOWN",            # sentinel: position still open
+        "hold_duration_minutes": None,       # AC-193: null until exit proven
+        "exit_reason": None,                 # AC-193: null until exit proven
         "execution_quality_flag": quality_flag,
         "broker_order_id_entry": broker_order_id,
         "broker_order_id_exit": None,  # AC-190: null until a proven exit exists

@@ -140,36 +140,45 @@ def _validate(record: Any) -> dict[str, Any]:
         return _fail(f"qty must be numeric > 0, got {qty!r}")
 
     # --- timestamps ---
-    for ts_field in ("entry_ts_utc", "exit_ts_utc", "ts_recorded_utc"):
-        if not _is_valid_utc_ts(record[ts_field]):
-            return _fail(f"{ts_field} must be a valid UTC timestamp string, got {record[ts_field]!r}")
+    if not _is_valid_utc_ts(record["entry_ts_utc"]):
+        return _fail(f"entry_ts_utc must be a valid UTC timestamp string, got {record['entry_ts_utc']!r}")
+    if not _is_valid_utc_ts(record["ts_recorded_utc"]):
+        return _fail(f"ts_recorded_utc must be a valid UTC timestamp string, got {record['ts_recorded_utc']!r}")
+    # AC-193: exit_ts_utc is null while position is still open
+    v_ets = record["exit_ts_utc"]
+    if v_ets is not None and not _is_valid_utc_ts(v_ets):
+        return _fail(f"exit_ts_utc must be a valid UTC timestamp string or null, got {v_ets!r}")
 
     # --- prices ---
-    for price_field in ("entry_price", "exit_price"):
-        v = record[price_field]
-        if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
-            return _fail(f"{price_field} must be numeric > 0, got {v!r}")
+    v_ep = record["entry_price"]
+    if not isinstance(v_ep, (int, float)) or isinstance(v_ep, bool) or v_ep <= 0:
+        return _fail(f"entry_price must be numeric > 0, got {v_ep!r}")
+    # AC-193: exit_price is null while position is still open
+    v_xp = record["exit_price"]
+    if v_xp is not None and (not isinstance(v_xp, (int, float)) or isinstance(v_xp, bool) or v_xp <= 0):
+        return _fail(f"exit_price must be numeric > 0 or null, got {v_xp!r}")
 
-    # --- realized_pnl_eur (may be negative) ---
+    # --- realized_pnl_eur (may be negative) — AC-193: null until exit ---
     pnl = record["realized_pnl_eur"]
-    if not isinstance(pnl, (int, float)) or isinstance(pnl, bool):
-        return _fail(f"realized_pnl_eur must be numeric, got {pnl!r}")
+    if pnl is not None and (not isinstance(pnl, (int, float)) or isinstance(pnl, bool)):
+        return _fail(f"realized_pnl_eur must be numeric or null, got {pnl!r}")
 
     # --- slippage_eur (may be positive or negative) ---
     slip = record["slippage_eur"]
     if not isinstance(slip, (int, float)) or isinstance(slip, bool):
         return _fail(f"slippage_eur must be numeric, got {slip!r}")
 
-    # --- hold_duration_minutes (>= 0) ---
+    # --- hold_duration_minutes — AC-193: null until exit ---
     hdm = record["hold_duration_minutes"]
-    if not isinstance(hdm, (int, float)) or isinstance(hdm, bool) or hdm < 0:
-        return _fail(f"hold_duration_minutes must be numeric >= 0, got {hdm!r}")
+    if hdm is not None and (not isinstance(hdm, (int, float)) or isinstance(hdm, bool) or hdm < 0):
+        return _fail(f"hold_duration_minutes must be numeric >= 0 or null, got {hdm!r}")
 
-    # --- exit_reason ---
-    if record["exit_reason"] not in _VALID_EXIT_REASONS:
+    # --- exit_reason — AC-193: null until exit ---
+    xr = record["exit_reason"]
+    if xr is not None and xr not in _VALID_EXIT_REASONS:
         return _fail(
-            f"exit_reason must be one of {sorted(_VALID_EXIT_REASONS)}, "
-            f"got {record['exit_reason']!r}"
+            f"exit_reason must be one of {sorted(_VALID_EXIT_REASONS)} or null, "
+            f"got {xr!r}"
         )
 
     # --- execution_quality_flag ---

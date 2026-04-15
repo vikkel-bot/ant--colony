@@ -384,18 +384,22 @@ class TestAC148Compatibility:
         er = _exec()["execution_result"]
         assert er["entry_price"] == 601.5
 
-    def test_exit_price_equals_entry_price(self):
+    def test_exit_price_is_null(self):
+        # AC-193: null until exit proven
         er = _exec()["execution_result"]
-        assert er["exit_price"] == er["entry_price"]
+        assert er["exit_price"] is None
 
-    def test_realized_pnl_is_zero(self):
-        assert _exec()["execution_result"]["realized_pnl_eur"] == 0.0
+    def test_realized_pnl_is_null(self):
+        # AC-193: null until exit proven
+        assert _exec()["execution_result"]["realized_pnl_eur"] is None
 
-    def test_hold_duration_is_zero(self):
-        assert _exec()["execution_result"]["hold_duration_minutes"] == 0.0
+    def test_hold_duration_is_null(self):
+        # AC-193: null until exit proven
+        assert _exec()["execution_result"]["hold_duration_minutes"] is None
 
-    def test_exit_reason_is_unknown(self):
-        assert _exec()["execution_result"]["exit_reason"] == "UNKNOWN"
+    def test_exit_reason_is_null(self):
+        # AC-193: null until exit proven
+        assert _exec()["execution_result"]["exit_reason"] is None
 
     def test_broker_order_id_entry_is_correct(self):
         assert _exec()["execution_result"]["broker_order_id_entry"] == "BTV-ORDER-001"
@@ -538,34 +542,39 @@ class TestReconcilerTradeId:
 # ---------------------------------------------------------------------------
 
 class TestReconcilerSentinels:
-    def test_exit_reason_unknown(self):
+    def test_exit_reason_null(self):
+        # AC-193: null until exit proven
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["exit_reason"] == "UNKNOWN"
+        assert er["exit_reason"] is None
 
     def test_broker_order_id_exit_null(self):
         # AC-190: null until a proven exit exists
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
         assert er["broker_order_id_exit"] is None
 
-    def test_realized_pnl_zero(self):
+    def test_realized_pnl_null(self):
+        # AC-193: null until exit proven
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["realized_pnl_eur"] == 0.0
+        assert er["realized_pnl_eur"] is None
 
-    def test_hold_duration_zero(self):
+    def test_hold_duration_null(self):
+        # AC-193: null until exit proven
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["hold_duration_minutes"] == 0.0
+        assert er["hold_duration_minutes"] is None
 
     def test_slippage_zero(self):
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
         assert er["slippage_eur"] == 0.0
 
-    def test_exit_ts_equals_entry_ts(self):
+    def test_exit_ts_null(self):
+        # AC-193: null until exit proven
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["exit_ts_utc"] == er["entry_ts_utc"]
+        assert er["exit_ts_utc"] is None
 
-    def test_exit_price_equals_entry_price(self):
+    def test_exit_price_null(self):
+        # AC-193: null until exit proven
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
-        assert er["exit_price"] == er["entry_price"]
+        assert er["exit_price"] is None
 
 
 # ---------------------------------------------------------------------------
