@@ -113,21 +113,19 @@ def _gate(cfg=None, macro=None, intake=None) -> dict:
 # ---------------------------------------------------------------------------
 
 class TestDefaultConfigBlocked:
-    def test_default_config_gate_result_is_bool(self):
-        # Gate result depends on operator-controlled config; value may vary
+    def test_default_config_blocked(self):
         cfg = load_config()
         result = evaluate_live_execution_gate(cfg, _macro())
-        assert isinstance(result["allow"], bool)
+        assert result["allow"] is False
 
     def test_default_config_live_enabled_is_bool(self):
-        # live_enabled is managed by operator
+        # live_enabled is managed by operator; allow_broker_execution is the hard gate
         cfg = load_config()
         assert isinstance(cfg.get("live_enabled"), bool)
 
-    def test_default_config_allow_broker_is_bool(self):
-        # allow_broker_execution is managed by operator
+    def test_default_config_allow_broker_false(self):
         cfg = load_config()
-        assert isinstance(cfg.get("allow_broker_execution"), bool)
+        assert cfg.get("allow_broker_execution") is False
 
 
 # ---------------------------------------------------------------------------
@@ -368,11 +366,10 @@ class TestIntakeApproved:
 # ---------------------------------------------------------------------------
 
 class TestRunnerBlockedOutput:
-    def test_runner_default_config_returns_valid_state(self):
-        # State depends on operator-controlled config; gate may be open or blocked
+    def test_runner_blocked_default_config(self):
         cfg = load_config()
         result = run(config=cfg, macro_config=_macro())
-        assert result["state"] in ("BLOCKED", "LIVE_GATE_READY", "EXECUTED", "EXIT_EXECUTED")
+        assert result["state"] == "BLOCKED"
         assert result["component"] == "live_lane_runner"
 
     def test_runner_blocked_has_live_enabled(self):
@@ -384,7 +381,7 @@ class TestRunnerBlockedOutput:
     def test_runner_blocked_has_allow_broker_execution(self):
         result = run(config=load_config(), macro_config=_macro())
         assert "allow_broker_execution" in result
-        assert isinstance(result["allow_broker_execution"], bool)
+        assert result["allow_broker_execution"] is False
 
     def test_runner_blocked_has_market_and_strategy(self):
         result = run(config=load_config(), macro_config=_macro())
@@ -463,9 +460,9 @@ class TestRepoDefaultSentinels:
         # live_enabled is managed by operator; allow_broker_execution is the hard gate
         assert isinstance(load_config()["live_enabled"], bool)
 
-    def test_repo_default_allow_broker_is_bool(self):
-        # allow_broker_execution is managed by operator
-        assert isinstance(load_config()["allow_broker_execution"], bool)
+    def test_repo_default_allow_broker_false(self):
+        # allow_broker_execution must remain false until explicit operator activation
+        assert load_config()["allow_broker_execution"] is False
 
     def test_repo_default_enabled_is_bool(self):
         assert isinstance(load_config()["enabled"], bool)
