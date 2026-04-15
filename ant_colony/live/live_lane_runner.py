@@ -417,6 +417,9 @@ def _check_auto_exit(
             return None  # no open position — nothing to check
 
         # Price fetch is required. Fail-closed if unavailable.
+        if _adapter is None:
+            from ant_colony.broker_adapters.bitvavo_adapter import BitvavoAdapter
+            _adapter = BitvavoAdapter()
         current_price = _fetch_current_price(_adapter, market)
         if current_price is None:
             return {
