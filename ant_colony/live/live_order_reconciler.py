@@ -74,16 +74,33 @@ def _reconcile(intake_record: Any, broker_response: Any) -> dict[str, Any]:
     if not isinstance(intended_price, (int, float)) or intended_price <= 0:
         return _fail(f"intake intended_entry_price invalid: {intended_price!r}")
 
-    # Determine fill price: use Bitvavo raw price field if available
-    fill_price = intended_price
-    price_raw = raw.get("price")
-    if price_raw is not None:
+    # Determine fill price.
+    # AC-192: priority: fills[0]["price"] → raw["price"] → fail-closed.
+    # intended_entry_price is never used as entry_price — it is only a
+    # pre-trade estimate; the actual fill price must come from the broker.
+    fill_price: float | None = None
+
+    fills = raw.get("fills")
+    if isinstance(fills, list) and fills:
         try:
-            candidate = float(price_raw)
+            candidate = float(fills[0].get("price") or 0)
             if candidate > 0:
                 fill_price = candidate
         except (ValueError, TypeError):
             pass
+
+    if fill_price is None:
+        price_raw = raw.get("price")
+        if price_raw is not None:
+            try:
+                candidate = float(price_raw)
+                if candidate > 0:
+                    fill_price = candidate
+            except (ValueError, TypeError):
+                pass
+
+    if fill_price is None:
+        return _fail("broker_response has no fill price (fills[0].price and raw.price both absent)")
 
     # Determine execution quality flag
     quality_flag = "OK"

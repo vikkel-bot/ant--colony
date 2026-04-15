@@ -224,12 +224,12 @@ def test_C_slippage_from_raw_price(tmp_path):
 # D. slippage falls back to entry_price when no raw price
 # ---------------------------------------------------------------------------
 
-def test_D_slippage_fallback_to_entry_price(tmp_path):
+def test_D_no_fill_price_fails_closed(tmp_path):
+    # AC-192: broker response without fills or raw.price → execution fails closed.
+    # No fallback to intended_entry_price.
     result = _run(tmp_path, _BROKER_RESPONSE_NO_PRICE)
-    assert result["ok"] is True
-    fb = _load_feedback(result)
-    # fill_price == entry_price (600.0) → slippage = 0.0
-    assert fb["slippage_vs_expected_eur"] == 0.0
+    assert result["ok"] is False
+    assert "fill price" in result.get("reason", "").lower() or result.get("state") == "BLOCKED"
 
 
 # ---------------------------------------------------------------------------

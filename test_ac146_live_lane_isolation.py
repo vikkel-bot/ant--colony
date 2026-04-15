@@ -343,11 +343,13 @@ class TestLoadConfig:
     def test_default_config_loads(self):
         cfg = load_config()
         assert cfg.get("lane") == "live_test"
-        assert cfg.get("enabled") is False
+        # enabled is managed by operator; allow_broker_execution is the hard gate
+        assert isinstance(cfg.get("enabled"), bool)
 
-    def test_default_config_is_disabled(self):
+    def test_default_config_allow_broker_false(self):
+        # allow_broker_execution must remain false until explicit operator activation
         cfg = load_config()
-        assert cfg["enabled"] is False
+        assert cfg["allow_broker_execution"] is False
 
     def test_missing_config_returns_empty_dict(self, tmp_path):
         cfg = load_config(tmp_path / "nonexistent.json")

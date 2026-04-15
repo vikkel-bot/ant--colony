@@ -430,12 +430,24 @@ class TestReconcilerValid:
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]
         assert er["entry_price"] == 601.5
 
-    def test_fallback_to_intended_price_when_no_raw_price(self):
+    def test_fail_closed_when_no_fill_price(self):
+        # AC-192: no fills and no raw.price → fail-closed (no fallback to intended_price)
         resp = dict(_MOCK_BROKER_RESPONSE_OK)
         resp["data"] = dict(resp["data"])
         resp["data"]["raw"] = {"orderId": "X1", "status": "filled"}
+        result = reconcile_live_order(_LIVE_INTAKE, resp)
+        assert result["ok"] is False
+        assert "fill price" in result["reason"].lower()
+
+    def test_fill_price_from_fills_takes_priority(self):
+        # AC-192: fills[0]["price"] takes priority over raw["price"]
+        resp = dict(_MOCK_BROKER_RESPONSE_OK)
+        resp["data"] = dict(resp["data"])
+        resp["data"]["raw"] = dict(resp["data"]["raw"])
+        resp["data"]["raw"]["fills"] = [{"price": "514.66", "amount": "0.08"}]
+        resp["data"]["raw"]["price"] = "601.5"  # should be ignored
         er = reconcile_live_order(_LIVE_INTAKE, resp)["execution_result"]
-        assert er["entry_price"] == 600.0  # intended_entry_price
+        assert er["entry_price"] == 514.66
 
     def test_quality_ok_when_fully_filled(self):
         er = reconcile_live_order(_LIVE_INTAKE, _MOCK_BROKER_RESPONSE_OK)["execution_result"]

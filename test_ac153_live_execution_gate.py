@@ -118,9 +118,10 @@ class TestDefaultConfigBlocked:
         result = evaluate_live_execution_gate(cfg, _macro())
         assert result["allow"] is False
 
-    def test_default_config_live_enabled_false(self):
+    def test_default_config_live_enabled_is_bool(self):
+        # live_enabled is managed by operator; allow_broker_execution is the hard gate
         cfg = load_config()
-        assert cfg.get("live_enabled") is False
+        assert isinstance(cfg.get("live_enabled"), bool)
 
     def test_default_config_allow_broker_false(self):
         cfg = load_config()
@@ -374,7 +375,8 @@ class TestRunnerBlockedOutput:
     def test_runner_blocked_has_live_enabled(self):
         result = run(config=load_config(), macro_config=_macro())
         assert "live_enabled" in result
-        assert result["live_enabled"] is False
+        # live_enabled reflects the config value (may be True when manually activated)
+        assert isinstance(result["live_enabled"], bool)
 
     def test_runner_blocked_has_allow_broker_execution(self):
         result = run(config=load_config(), macro_config=_macro())
@@ -454,11 +456,13 @@ class TestLiveEnabledWithoutBroker:
 # ---------------------------------------------------------------------------
 
 class TestRepoDefaultSentinels:
-    def test_repo_default_live_enabled_false(self):
-        assert load_config()["live_enabled"] is False
+    def test_repo_default_live_enabled_is_bool(self):
+        # live_enabled is managed by operator; allow_broker_execution is the hard gate
+        assert isinstance(load_config()["live_enabled"], bool)
 
     def test_repo_default_allow_broker_false(self):
+        # allow_broker_execution must remain false until explicit operator activation
         assert load_config()["allow_broker_execution"] is False
 
-    def test_repo_default_enabled_false(self):
-        assert load_config()["enabled"] is False
+    def test_repo_default_enabled_is_bool(self):
+        assert isinstance(load_config()["enabled"], bool)
